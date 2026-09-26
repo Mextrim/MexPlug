@@ -9,3 +9,6 @@ daw-plugin/target/
 *.log
 test_out.txt
 bundle_out.txt
+
+# Built installer (published as GitHub Release asset)
+installer/*.exe
