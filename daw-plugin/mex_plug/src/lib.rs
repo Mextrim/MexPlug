@@ -44,6 +44,16 @@ struct MexPlugParams {
     pub output: FloatParam,
     #[id = "ceil"]
     pub ceil: FloatParam,
+    #[id = "input"]
+    pub input: FloatParam,
+    #[id = "bass"]
+    pub bass: FloatParam,
+    #[id = "air"]
+    pub air: FloatParam,
+    #[id = "glue"]
+    pub glue: FloatParam,
+    #[id = "style"]
+    pub style: FloatParam,
 }
 
 impl Default for MexPlug {
@@ -133,6 +143,52 @@ impl Default for MexPlugParams {
             .with_smoother(SmoothingStyle::Linear(30.0))
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            input: FloatParam::new(
+                "Input",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            bass: FloatParam::new(
+                "Bass",
+                0.0,
+                FloatRange::Linear { min: -6.0, max: 6.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            air: FloatParam::new(
+                "Air",
+                1.6,
+                FloatRange::Linear { min: 0.0, max: 3.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            glue: FloatParam::new(
+                "Glue",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+            style: FloatParam::new(
+                "Style",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_step_size(1.0)
+            .with_value_to_string(Arc::new(|v: f32| match v.round() as i32 {
+                0 => String::from("Clean"),
+                2 => String::from("Hard"),
+                _ => String::from("Warm"),
+            })),
         }
     }
 }
@@ -214,6 +270,11 @@ impl Plugin for MexPlug {
                 smooth: self.params.smooth.smoothed.next(),
                 monobass: self.params.monobass.value(),
                 ceil_db: self.params.ceil.smoothed.next(),
+                input_gain: util::db_to_gain(self.params.input.smoothed.next()),
+                bass_db: self.params.bass.smoothed.next(),
+                air_db: self.params.air.smoothed.next(),
+                glue: self.params.glue.smoothed.next(),
+                style: self.params.style.smoothed.next(),
             };
 
             // Copy through a local array: gives simultaneous L/R access for

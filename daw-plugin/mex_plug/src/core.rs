@@ -1,8 +1,10 @@
 //! Real-time-safe DSP core for MexPlug (ported from the offline WAV tool).
 //!
-//! Chain: DC-block -> EQ (HP 28 Hz, mud-cut 320 Hz, air 8.2 kHz) -> mono bass
-//! (-> tanh saturation -> M/S width -> punch -> wow/flutter -> room -> smooth
-//! (de-harsh) -> tape noise -> glue 2:1 -> output trim -> limiter.
+//! Chain: input trim -> DC-block -> EQ (HP 28 Hz, mud-cut 320 Hz,
+//! Bass shelf @100 Hz, Air shelf @8.2 kHz) -> mono bass (LR4 @120 Hz)
+//! -> saturation (Clean/Warm/Hard) -> M/S width -> punch -> wow/flutter
+//! -> room -> smooth (de-harsh) -> tape noise -> glue 2:1 (amount)
+//! -> output trim -> limiter.
 //!
 //! Differences vs the offline version (honest list):
 //! - Wow/flutter uses a bounded delay line instead of whole-buffer resampling.
@@ -21,16 +23,21 @@ pub struct LiveParams {
     pub width: f32,
     pub room: f32,
     pub human: f32,
-    /// Output trim as linear gain (dB -> gain conversion happens in lib.rs).
     pub out_gain: f32,
-    /// Transient emphasis 0..1.
     pub punch: f32,
-    /// HF harshness tamer 0..1.
     pub smooth: f32,
-    /// Fold bass below ~120 Hz to mono.
     pub monobass: bool,
-    /// Limiter ceiling in dBFS (e.g. -1.0).
     pub ceil_db: f32,
+    /// Input trim as linear gain.
+    pub input_gain: f32,
+    /// Low-shelf gain in dB @100 Hz.
+    pub bass_db: f32,
+    /// High-shelf gain in dB @8.2 kHz.
+    pub air_db: f32,
+    /// Glue amount 0..1 (scales the gain reduction).
+    pub glue: f32,
+    /// Saturation character: 0 = Clean (atan), 1 = Warm (tanh), 2 = Hard.
+    pub style: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -95,6 +102,22 @@ fn lowpass(sr: f64, fc: f64, q: f64) -> BiquadCoef {
     )
 }
 
+fn lowshelf(sr: f64, fc: f64, slope: f64, gdb: f64) -> BiquadCoef {
+    let a_pow = 10.0f64.powf(gdb / 40.0);
+    let w = TAU * fc / sr;
+    let (s, c) = w.sin_cos();
+    let a = s / 2.0 * ((a_pow + 1.0 / a_pow) * (1.0 / slope - 1.0) + 2.0).sqrt();
+    let sq = a_pow.sqrt();
+    coef(
+        a_pow * ((a_pow + 1.0) - (a_pow - 1.0) * c + 2.0 * sq * a),
+        2.0 * a_pow * ((a_pow - 1.0) - (a_pow + 1.0) * c),
+        a_pow * ((a_pow + 1.0) - (a_pow - 1.0) * c - 2.0 * sq * a),
+        (a_pow + 1.0) + (a_pow - 1.0) * c + 2.0 * sq * a,
+        -2.0 * ((a_pow - 1.0) + (a_pow + 1.0) * c),
+        (a_pow + 1.0) + (a_pow - 1.0) * c - 2.0 * sq * a,
+    )
+}
+
 fn highpass(sr: f64, fc: f64, q: f64) -> BiquadCoef {
     let w = TAU * fc / sr;
     let (s, c) = w.sin_cos();
@@ -146,7 +169,8 @@ struct Channel {
     dc_y1: f64,
     hp: Biquad,
     mud: Biquad,
-    air: Biquad,
+    lows: Biquad,
+    highs: Biquad,
     mhp1: Biquad,
     mhp2: Biquad,
     sustain: f64,
@@ -220,11 +244,9 @@ impl Core {
 
         let hp = highpass(sr, 28.0, 0.707);
         let mud = peak(sr, 320.0, 0.9, -1.2);
-        let air = highshelf(sr, 8200.0, 0.8, 1.6);
         for ch in self.chan.iter_mut() {
             ch.hp.c = hp;
             ch.mud.c = mud;
-            ch.air.c = air;
         }
 
         // Mono bass LR4 crossover at ~120 Hz (Q=0.5 stages).
@@ -286,7 +308,8 @@ impl Core {
             ch.dc_y1 = 0.0;
             ch.hp.clear();
             ch.mud.clear();
-            ch.air.clear();
+            ch.lows.clear();
+            ch.highs.clear();
             ch.mhp1.clear();
             ch.mhp2.clear();
             ch.sustain = 0.0;
@@ -334,18 +357,25 @@ impl Core {
         let n = n.min(2);
         let drive = p.drive.max(0.5) as f64;
         let sat_norm = (drive * 0.9).tanh().max(1e-6);
+        // Bass/Air shelves follow their smoothed params (recomputed per frame).
+        let lows_c = lowshelf(self.sr, 100.0, 1.0, p.bass_db.clamp(-6.0, 6.0) as f64);
+        let highs_c = highshelf(self.sr, 8200.0, 0.8, p.air_db.clamp(0.0, 3.0) as f64);
+        let style = (p.style.round() as i32).clamp(0, 2);
 
-        // Stage 1 per channel: DC-block + EQ.
+        // Stage 0: input trim, then Stage 1 per channel: DC-block + EQ.
         for c in 0..n {
             let ch = &mut self.chan[c];
-            let mut x = s[c] as f64;
+            ch.lows.c = lows_c;
+            ch.highs.c = highs_c;
+            let mut x = s[c] as f64 * p.input_gain as f64;
             let y = x - ch.dc_x1 + DC_R * ch.dc_y1;
             ch.dc_x1 = x;
             ch.dc_y1 = y;
             x = y;
             x = ch.hp.run(x);
             x = ch.mud.run(x);
-            x = ch.air.run(x);
+            x = ch.lows.run(x);
+            x = ch.highs.run(x);
             s[c] = x as f32;
         }
 
@@ -366,10 +396,22 @@ impl Core {
             }
         }
 
-        // Stage 3 per channel: tanh saturation.
+        // Stage 3 per channel: saturation with selectable character.
+        // 0 = Clean (atan), 1 = Warm (tanh), 2 = Hard (hot tanh).
         for c in 0..n {
             let x = s[c] as f64;
-            s[c] = ((x * drive).tanh() / sat_norm * 0.92) as f32;
+            let y = match style {
+                0 => {
+                    let k = drive * 1.2;
+                    (x * k).atan() / (k * 0.9).atan().max(1e-6)
+                }
+                2 => {
+                    let k = drive * 1.6;
+                    (x * k).tanh() / (k * 0.9).tanh().max(1e-6)
+                }
+                _ => (x * drive).tanh() / sat_norm,
+            };
+            s[c] = (y * 0.92) as f32;
         }
 
         // Stage 4: M/S width (stereo only).
@@ -492,7 +534,9 @@ impl Core {
             if self.glue_env > GLUE_THRESH {
                 gr = (GLUE_THRESH / self.glue_env).powf(1.0 - 1.0 / 2.0);
             }
-            let g = (gr * GLUE_MAKEUP * p.out_gain as f64) as f32;
+            // Glue amount scales the reduction (1.0 = full glue as before).
+            let gr_mix = 1.0 + (gr - 1.0) * p.glue.clamp(0.0, 1.0) as f64;
+            let g = (gr_mix * GLUE_MAKEUP * p.out_gain as f64) as f32;
             for c in 0..n {
                 s[c] *= g;
             }
@@ -561,6 +605,11 @@ mod tests {
             smooth: 0.25,
             monobass: true,
             ceil_db: -1.0,
+            input_gain: 1.0,
+            bass_db: 0.0,
+            air_db: 1.6,
+            glue: 1.0,
+            style: 1.0,
         }
     }
 
@@ -791,5 +840,110 @@ mod tests {
         }
         assert!(pk > 0.5, "signal lost, peak={pk}");
         assert!(pk <= 0.710, "ceiling violated, peak={pk}");
+    }
+
+    /// Isolated params for stage tests: no time-smearing or HF/LF coloration.
+    fn isolated() -> LiveParams {
+        let mut p = default_params();
+        p.width = 1.0;
+        p.room = 0.0;
+        p.human = 0.0;
+        p.punch = 0.0;
+        p.smooth = 0.0;
+        p.monobass = false;
+        p
+    }
+
+    #[test]
+    fn input_gain_scales_level() {
+        let mut hi = isolated();
+        hi.input_gain = 1.0;
+        let mut lo = isolated();
+        lo.input_gain = 0.5; // -6 dB
+        let pk_hi = peak(&render_freq(2, 44100, &hi, 440.0, 0.3, 0.3));
+        let pk_lo = peak(&render_freq(2, 44100, &lo, 440.0, 0.3, 0.3));
+        let ratio = pk_lo / pk_hi;
+        assert!(
+            (0.35..0.7).contains(&ratio),
+            "input trim off, ratio={ratio} hi={pk_hi} lo={pk_lo}"
+        );
+    }
+
+    #[test]
+    fn bass_shelf_boosts_lows() {
+        let mut hi = isolated();
+        hi.bass_db = 6.0;
+        let mut lo = isolated();
+        lo.bass_db = 0.0;
+        let pk_hi = peak(&render_freq(2, 44100, &hi, 60.0, 0.4, 0.4));
+        let pk_lo = peak(&render_freq(2, 44100, &lo, 60.0, 0.4, 0.4));
+        assert!(
+            pk_hi > pk_lo * 1.15,
+            "bass shelf has no effect, hi={pk_hi} lo={pk_lo}"
+        );
+    }
+
+    #[test]
+    fn air_shelf_boosts_highs() {
+        let mut hi = isolated();
+        hi.air_db = 3.0;
+        let mut lo = isolated();
+        lo.air_db = 0.0;
+        let pk_hi = peak(&render_freq(2, 44100, &hi, 12000.0, 0.25, 0.25));
+        let pk_lo = peak(&render_freq(2, 44100, &lo, 12000.0, 0.25, 0.25));
+        assert!(
+            pk_hi > pk_lo * 1.1,
+            "air shelf has no effect, hi={pk_hi} lo={pk_lo}"
+        );
+    }
+
+    #[test]
+    fn glue_amount_controls_compression() {
+        // Skip the first 0.5 s: the onset transient passes before the glue
+        // envelope engages, so only the settled state measures compression.
+        let mut on = isolated();
+        on.glue = 1.0;
+        let mut off = isolated();
+        off.glue = 0.0;
+        let meas = |p: &LiveParams| {
+            let mut core = Core::new();
+            core.set_sample_rate(44100.0);
+            let mut pk = 0.0f32;
+            for i in 0..44100 {
+                let t = i as f32 / 44100.0;
+                let v = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.7;
+                let mut s = [v, v];
+                core.process_frame(&mut s, 2, p);
+                if i > 22050 {
+                    pk = pk.max(s[0].abs()).max(s[1].abs());
+                }
+            }
+            assert!(pk.is_finite());
+            pk
+        };
+        let pk_on = meas(&on);
+        let pk_off = meas(&off);
+        assert!(
+            pk_on < pk_off * 0.9,
+            "glue amount has no effect, on={pk_on} off={pk_off}"
+        );
+    }
+
+    #[test]
+    fn sat_styles_sound_different() {
+        let mut clean = isolated();
+        clean.style = 0.0;
+        let mut hard = isolated();
+        hard.style = 2.0;
+        clean.drive = 2.5;
+        hard.drive = 2.5;
+        let a = render_freq(2, 44100, &clean, 440.0, 0.5, 0.5);
+        let b = render_freq(2, 44100, &hard, 440.0, 0.5, 0.5);
+        let mut diff = 0.0f32;
+        for i in 0..44100 {
+            diff = diff.max((a[0][i] - b[0][i]).abs());
+            assert!(a[0][i].is_finite() && b[0][i].is_finite());
+        }
+        assert!(diff > 1e-3, "sat styles identical, diff={diff}");
     }
 }
