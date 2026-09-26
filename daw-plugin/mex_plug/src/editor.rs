@@ -149,6 +149,7 @@ pub struct MexEditor {
     peak_l: Arc<AtomicF32>,
     peak_r: Arc<AtomicF32>,
     gr_db: Arc<AtomicF32>,
+    peak_hold: [f32; 2],
     clip: bool,
     ab: [AbSlot; 2],
     ab_active: usize,
@@ -173,6 +174,7 @@ impl MexEditor {
             peak_l,
             peak_r,
             gr_db,
+            peak_hold: [0.0, 0.0],
             clip: false,
             ab: [slot, slot],
             ab_active: 0,
@@ -247,6 +249,11 @@ impl NiceEguiApp for MexEditor {
 
         let bg_rect = ui.available_rect_before_wrap();
         ui.painter().rect_filled(bg_rect, 0.0, BG);
+        // Turquoise top rule: the Flat UI signature line.
+        let mut rule = bg_rect;
+        rule.set_bottom(rule.top() + 2.0);
+        ui.painter().rect_filled(rule, 0.0, ACCENT);
+        ui.add_space(4.0);
 
         let setter = gui.ctx.param_setter();
 
@@ -262,6 +269,7 @@ impl NiceEguiApp for MexEditor {
                     &self.peak_l,
                     &self.peak_r,
                     &self.gr_db,
+                    &mut self.peak_hold,
                     &mut self.clip,
                 );
             });
@@ -391,11 +399,13 @@ impl NiceEguiApp for MexEditor {
 }
 
 /// Stereo output meter + glue reduction meter, clip latch LED (click to clear).
+/// peak_hold keeps a falling peak tick per channel.
 fn meter_block(
     ui: &mut egui::Ui,
     peak_l: &Arc<AtomicF32>,
     peak_r: &Arc<AtomicF32>,
     gr_db: &Arc<AtomicF32>,
+    peak_hold: &mut [f32; 2],
     clip: &mut bool,
 ) {
     let l = peak_l.load(Ordering::Relaxed);
@@ -413,9 +423,9 @@ fn meter_block(
     };
 
     ui.vertical(|ui| {
-        meter_bar(ui, "L", ldb, 140.0);
+        meter_bar(ui, "L", ldb, 140.0, &mut peak_hold[0]);
         ui.add_space(3.0);
-        meter_bar(ui, "R", rdb, 140.0);
+        meter_bar(ui, "R", rdb, 140.0, &mut peak_hold[1]);
         ui.add_space(3.0);
         gr_bar(ui, gr_db.load(Ordering::Relaxed));
         ui.add_space(3.0);
@@ -530,6 +540,8 @@ fn param_knob(
     let hot = response.hovered() || response.dragged();
 
     arc_line(p, center, radius, a0, a1, Stroke::new(2.5, LINE));
+    // Rounded cap where the track starts.
+    p.circle_filled(center + Vec2::angled(a0) * radius, 1.25, LINE);
     if norm > 0.002 {
         arc_line(
             p,
@@ -538,6 +550,23 @@ fn param_knob(
             a0,
             ang,
             Stroke::new(2.5, if hot { ACCENT_HOT } else { ACCENT }),
+        );
+        // Rounded cap at the live value end.
+        p.circle_filled(
+            center + Vec2::angled(ang) * radius,
+            1.25,
+            if hot { ACCENT_HOT } else { ACCENT },
+        );
+    }
+    // Min / mid / max ticks.
+    for &ta in &[a0, a0 + 0.75 * PI, a1] {
+        let dir = Vec2::angled(ta);
+        p.line_segment(
+            [
+                center + dir * (radius + 4.0),
+                center + dir * (radius + 7.0),
+            ],
+            Stroke::new(1.5, MUTED),
         );
     }
     let dir = Vec2::angled(ang);
@@ -561,9 +590,14 @@ fn arc_line(p: &egui::Painter, center: Pos2, radius: f32, a0: f32, a1: f32, stro
     p.line(pts, stroke);
 }
 
-/// Thin level bar.
-fn meter_bar(ui: &mut egui::Ui, label: &str, peak_db: f32, width: f32) {
+/// Thin level bar with a falling peak-hold tick.
+fn meter_bar(ui: &mut egui::Ui, label: &str, peak_db: f32, width: f32, hold: &mut f32) {
     let norm = ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0);
+    if norm > *hold {
+        *hold = norm;
+    } else {
+        *hold = (*hold - 0.02).max(norm);
+    }
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).size(10.0).color(MUTED));
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
@@ -576,6 +610,13 @@ fn meter_bar(ui: &mut egui::Ui, label: &str, peak_db: f32, width: f32) {
                 fill,
                 1.5,
                 if peak_db > -1.0 { BAD } else { INK },
+            );
+        }
+        if *hold > 0.002 {
+            let x = rect.left() + rect.width() * *hold;
+            p.line_segment(
+                [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                Stroke::new(1.5, INK),
             );
         }
     });

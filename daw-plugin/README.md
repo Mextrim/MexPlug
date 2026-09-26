@@ -1,4 +1,4 @@
-# MexPlug — VST3/CLAP плагин (v0.7.1)
+# MexPlug — VST3/CLAP плагин (v0.7.2)
 
 ## Установка за 1 минуту (без сборки, для FL Studio)
 
