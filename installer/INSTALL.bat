@@ -3,6 +3,10 @@ chcp 65001 >nul
 setlocal
 title MexPlug — автоустановка в FL Studio
 
+:: Лог для диагностики
+set "LOG=%TEMP%\mexplug_install.log"
+echo [%DATE% %TIME%] start %~f0 >> "%LOG%"
+
 :: Папка, откуда запущен этот файл (там же лежат mex_plug.vst3 и mex_plug.clap)
 set "HERE=%~dp0"
 
@@ -20,9 +24,11 @@ if not exist "%HERE%mex_plug.clap" (
 net session >nul 2>&1
 if errorlevel 1 (
   echo [*] Нужны права администратора — перезапускаю с запросом...
+  echo [%DATE% %TIME%] relaunch elevated >> "%LOG%"
   powershell -NoProfile -Command "Start-Process '%~f0' -Verb RunAs"
   exit /b
 )
+echo [%DATE% %TIME%] elevated ok >> "%LOG%"
 
 echo [*] Удаляю старую копию, если была...
 rmdir /S /Q "%ProgramFiles%\Common Files\VST3\mex_plug.vst3" 2>nul
@@ -33,13 +39,16 @@ del /Q "%ProgramFiles%\Common Files\CLAP\fl_human_mix.clap" 2>nul
 echo [*] Ставлю VST3...
 xcopy /E /I /Y "%HERE%mex_plug.vst3" "%ProgramFiles%\Common Files\VST3\mex_plug.vst3" >nul
 if errorlevel 1 (
-  echo [x] Не вышло скопировать VST3.
+  echo [x] Не вышло скопировать VST3. Подробности в %LOG%.
+  echo [%DATE% %TIME%] VST3 copy FAILED >> "%LOG%"
   pause
   exit /b 1
 )
+echo [%DATE% %TIME%] VST3 ok >> "%LOG%"
 
 echo [*] Ставлю CLAP...
 copy /Y "%HERE%mex_plug.clap" "%ProgramFiles%\Common Files\CLAP\mex_plug.clap" >nul
+echo [%DATE% %TIME%] CLAP ok >> "%LOG%"
 
 echo.
 echo [OK] MexPlug установлен:
