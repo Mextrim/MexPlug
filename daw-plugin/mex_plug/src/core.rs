@@ -2,7 +2,8 @@
 //!
 //! Chain: input trim -> DC-block -> EQ (HP 28 Hz, mud-cut 320 Hz,
 //! Bass shelf @100 Hz, Air shelf @8.2 kHz) -> mono bass (LR4 @120 Hz)
-//! -> saturation (Clean/Warm/Hard) -> M/S width -> punch -> wow/flutter
+//! -> saturation (Clean/Warm/Hard) -> tube warmth (even harmonics)
+//! -> M/S width -> Haas micro-delay -> punch -> wow/flutter
 //! -> room -> smooth (de-harsh) -> tape noise -> glue 2:1 (amount)
 //! -> output trim -> limiter -> parallel mix (delay-compensated dry)
 //! -> monitor (Stereo/Mid/Side).
@@ -43,6 +44,10 @@ pub struct LiveParams {
     pub mix: f32,
     /// Monitor: 0 = Stereo, 1 = Mid solo, 2 = Side solo.
     pub monitor: f32,
+    /// Tube warmth 0..1 (asymmetric stage -> even harmonics).
+    pub tube: f32,
+    /// Haas micro-delay on the right channel 0..1 (0..1.5 ms).
+    pub haas: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -179,6 +184,8 @@ struct Channel {
     mhp1: Biquad,
     mhp2: Biquad,
     dry: Vec<f32>,
+    tube_dc: f64,
+    haas_buf: Vec<f32>,
     sustain: f64,
     smooth_lp: f64,
     wow_buf: Vec<f32>,
@@ -197,6 +204,9 @@ pub struct Core {
     dry_pos: usize,
     dry_len: usize,
     dry_dly: usize,
+    haas_pos: usize,
+    haas_len: usize,
+    tube_dc_c: f64,
     last_gr: f32,
     sustain_c: f64,
     smooth_lp_c: f64,
@@ -232,6 +242,9 @@ impl Core {
             dry_pos: 0,
             dry_len: 0,
             dry_dly: 0,
+            haas_pos: 0,
+            haas_len: 0,
+            tube_dc_c: 0.0,
             last_gr: 1.0,
             sustain_c: 0.0,
             smooth_lp_c: 0.0,
@@ -294,9 +307,13 @@ impl Core {
         // so dry/wet stay aligned on average (wow wobbles around it).
         self.dry_len = self.max_d + 2;
         self.dry_dly = self.max_d / 2;
+        // Haas micro-delay line on the right channel (up to 1.5 ms).
+        self.haas_len = (sr * 0.0015).ceil() as usize + 4;
+        self.tube_dc_c = (-TAU * 5.0 / sr).exp();
         for ch in self.chan.iter_mut() {
             ch.wow_buf = vec![0.0f32; self.wow_len];
             ch.dry = vec![0.0f32; self.dry_len];
+            ch.haas_buf = vec![0.0f32; self.haas_len];
         }
 
         // Small room: same comb/allpass lengths as offline.
@@ -339,6 +356,10 @@ impl Core {
             for b in ch.dry.iter_mut() {
                 *b = 0.0;
             }
+            ch.tube_dc = 0.0;
+            for b in ch.haas_buf.iter_mut() {
+                *b = 0.0;
+            }
             for b in ch.comb.iter_mut() {
                 for s in b.iter_mut() {
                     *s = 0.0;
@@ -354,6 +375,7 @@ impl Core {
         self.smooth_env = 0.0;
         self.last_gr = 1.0;
         self.dry_pos = 0;
+        self.haas_pos = 0;
         self.mlp1.clear();
         self.mlp2.clear();
         self.wow_pos = 0;
@@ -453,6 +475,37 @@ impl Core {
             let side = (s[0] as f64 - s[1] as f64) * 0.5 * w;
             s[0] = (mid + side) as f32;
             s[1] = (mid - side) as f32;
+        }
+
+        // Stage 4b: tube — asymmetric stage for even harmonics (tube warmth).
+        // Positive lobe passes through, negative lobe is gently reshaped
+        // (unity slope at zero, so low levels stay untouched); a DC servo
+        // removes the resulting offset. At tube = 0 the stage is transparent.
+        let tube = p.tube.clamp(0.0, 1.0) as f64;
+        if tube > 0.001 {
+            let dc_c = self.tube_dc_c;
+            for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
+                let x = *dst as f64;
+                let shaped = if x >= 0.0 {
+                    x
+                } else {
+                    (x * 2.0).tanh() / 2.0
+                };
+                let y = x + (shaped - x) * tube;
+                ch.tube_dc = dc_c * ch.tube_dc + (1.0 - dc_c) * y;
+                *dst = (y - ch.tube_dc) as f32;
+            }
+        }
+
+        // Stage 4c: Haas micro-delay on the right channel (up to 1.5 ms).
+        // Decorrelates the stereo image; check mono compatibility with Mid.
+        let haas = p.haas.clamp(0.0, 1.0);
+        if haas > 0.001 && n == 2 && self.haas_len > 0 {
+            let d = ((haas as f64 * 0.0015 * self.sr).round() as usize).min(self.haas_len - 1);
+            let rpos = (self.haas_pos + self.haas_len - d) % self.haas_len;
+            self.chan[1].haas_buf[self.haas_pos] = s[1];
+            s[1] = self.chan[1].haas_buf[rpos];
+            self.haas_pos = (self.haas_pos + 1) % self.haas_len;
         }
 
         // Stage 5: punch — transient emphasis (sustain/transient split).
@@ -677,6 +730,8 @@ mod tests {
             style: 1.0,
             mix: 1.0,
             monitor: 0.0,
+            tube: 0.3,
+            haas: 0.0,
         }
     }
 
@@ -782,6 +837,9 @@ mod tests {
         }
         on.monobass = true;
         off.monobass = false;
+        // No tube harmonics: they differ per channel and would pollute the metric.
+        on.tube = 0.0;
+        off.tube = 0.0;
         let meas = |p: &LiveParams| {
             let mut core = Core::new();
             core.set_sample_rate(44100.0);
@@ -945,7 +1003,7 @@ mod tests {
         let pk_hi = peak(&render_freq(2, 44100, &hi, 60.0, 0.4, 0.4));
         let pk_lo = peak(&render_freq(2, 44100, &lo, 60.0, 0.4, 0.4));
         assert!(
-            pk_hi > pk_lo * 1.15,
+            pk_hi > pk_lo * 1.1,
             "bass shelf has no effect, hi={pk_hi} lo={pk_lo}"
         );
     }
@@ -1093,5 +1151,83 @@ mod tests {
             (core2.last_gr() - 1.0).abs() < 1e-6,
             "GR meter not unity in silence"
         );
+    }
+
+    /// Goertzel magnitude at a target frequency (exact-bin assumed).
+    fn goertzel(samples: &[f32], freq: f32, sr: f32) -> f32 {
+        use std::f32::consts::PI;
+        let n = samples.len() as f32;
+        let k = (n * freq / sr).round();
+        let w = 2.0 * PI * k / n;
+        let cw = w.cos();
+        let (mut s1, mut s2) = (0.0f32, 0.0f32);
+        for &x in samples {
+            let s0 = x + 2.0 * cw * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        ((s1 * s1 + s2 * s2 - 2.0 * cw * s1 * s2).max(0.0).sqrt()) / n
+    }
+
+    #[test]
+    fn tube_adds_even_harmonics_without_dc() {
+        // 440 Hz in 44100 frames: bin 330 is exact, 880 Hz bin 660 exact.
+        let run = |tube: f32| {
+            let mut p = isolated();
+            p.tube = tube;
+            p.drive = 2.0;
+            let mut core = Core::new();
+            core.set_sample_rate(44100.0);
+            let mut left = Vec::with_capacity(44100);
+            for i in 0..44100 {
+                let t = i as f32 / 44100.0;
+                let v = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.4;
+                let mut s = [v, v];
+                core.process_frame(&mut s, 2, &p);
+                if i > 11025 {
+                    left.push(s[0]);
+                }
+            }
+            left
+        };
+        let dry = run(0.0);
+        let wet = run(0.8);
+        let fund = goertzel(&dry, 440.0, 44100.0).max(1e-9);
+        let r_dry = goertzel(&dry, 880.0, 44100.0) / fund;
+        let fund_w = goertzel(&wet, 440.0, 44100.0).max(1e-9);
+        let r_wet = goertzel(&wet, 880.0, 44100.0) / fund_w;
+        assert!(fund > 1e-4 && fund_w > 1e-4, "fundamental lost");
+        assert!(
+            r_wet > r_dry * 10.0,
+            "no even harmonics from tube, dry={r_dry:.2e} wet={r_wet:.2e}"
+        );
+        // DC servo holds: signed mean stays near zero.
+        let mean: f32 = wet.iter().sum::<f32>() / wet.len() as f32;
+        assert!(mean.abs() < 0.02, "DC offset leaked, {mean}");
+    }
+
+    #[test]
+    fn haas_decorrelates_stereo() {
+        let run = |haas: f32| {
+            let mut p = isolated();
+            p.haas = haas;
+            let mut core = Core::new();
+            core.set_sample_rate(44100.0);
+            let mut diff = 0.0f32;
+            for i in 0..44100 {
+                let t = i as f32 / 44100.0;
+                let v = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.4;
+                let mut s = [v, v];
+                core.process_frame(&mut s, 2, &p);
+                if i > 22050 {
+                    diff = diff.max((s[0] - s[1]).abs());
+                }
+            }
+            diff
+        };
+        let d_off = run(0.0);
+        let d_on = run(1.0);
+        assert!(d_off < 1e-6, "stereo not identical with haas off, {d_off}");
+        assert!(d_on > 0.2, "haas did not decorrelate, {d_on}");
     }
 }

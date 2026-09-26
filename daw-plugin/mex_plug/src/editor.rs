@@ -28,10 +28,10 @@ const ACCENT_HOT: Color32 = Color32::from_rgb(72, 201, 176);
 const BAD: Color32 = Color32::from_rgb(231, 76, 60);
 
 /// Plain-value snapshot of all automatable params (A/B slots + presets).
-/// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor.
+/// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor,tube,haas.
 #[derive(Clone, Copy)]
 struct AbSlot {
-    v: [f32; 15],
+    v: [f32; 17],
     mono: bool,
 }
 
@@ -54,6 +54,8 @@ impl AbSlot {
                 p.style.value(),
                 p.mix.value(),
                 p.monitor.value(),
+                p.tube.value(),
+                p.haas.value(),
             ],
             mono: p.monobass.value(),
         }
@@ -76,6 +78,8 @@ impl AbSlot {
             &p.style,
             &p.mix,
             &p.monitor,
+            &p.tube,
+            &p.haas,
         ];
         for (param, &val) in ps.iter().zip(self.v.iter()) {
             setter.begin_set_parameter(*param);
@@ -90,46 +94,51 @@ impl AbSlot {
 
 struct Preset {
     name: &'static str,
-    v: [f32; 15],
+    v: [f32; 17],
     mono: bool,
 }
 
-// drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor
+// drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor,tube,haas
 // style: 0 = Clean, 1 = Warm, 2 = Hard. monitor: 0 = Stereo, 1 = Mid, 2 = Side.
-const PRESETS: [Preset; 7] = [
+const PRESETS: [Preset; 8] = [
     Preset {
         name: "Gentle Polish",
-        v: [1.5, 1.12, 0.05, 0.4, 0.2, 0.3, 0.0, -1.0, 0.0, 0.0, 1.2, 0.6, 1.0, 1.0, 0.0],
+        v: [1.5, 1.12, 0.05, 0.4, 0.2, 0.3, 0.0, -1.0, 0.0, 0.0, 1.2, 0.6, 1.0, 1.0, 0.0, 0.3, 0.0],
         mono: true,
     },
     Preset {
         name: "AI Rescue",
-        v: [2.4, 1.22, 0.08, 0.85, 0.35, 0.6, 0.0, -1.0, -1.0, -0.5, 1.0, 0.8, 1.0, 1.0, 0.0],
+        v: [2.4, 1.22, 0.08, 0.85, 0.35, 0.6, 0.0, -1.0, -1.0, -0.5, 1.0, 0.8, 1.0, 1.0, 0.0, 0.5, 0.2],
         mono: true,
     },
     Preset {
         name: "Club Punch",
-        v: [2.8, 1.15, 0.04, 0.3, 0.7, 0.2, 1.0, -0.5, 0.0, 2.0, 1.8, 1.0, 2.0, 1.0, 0.0],
+        v: [2.8, 1.15, 0.04, 0.3, 0.7, 0.2, 1.0, -0.5, 0.0, 2.0, 1.8, 1.0, 2.0, 1.0, 0.0, 0.4, 0.0],
         mono: true,
     },
     Preset {
         name: "Lo-Fi Warmth",
-        v: [3.2, 1.05, 0.12, 1.0, 0.15, 0.4, 0.0, -1.5, -2.0, 1.0, 0.5, 0.7, 1.0, 0.85, 0.0],
+        v: [3.2, 1.05, 0.12, 1.0, 0.15, 0.4, 0.0, -1.5, -2.0, 1.0, 0.5, 0.7, 1.0, 0.85, 0.0, 0.7, 0.3],
         mono: true,
     },
     Preset {
         name: "Airy Clean",
-        v: [1.3, 1.28, 0.06, 0.35, 0.25, 0.35, 0.0, -1.0, 0.0, -1.0, 2.5, 0.5, 0.0, 1.0, 0.0],
+        v: [1.3, 1.28, 0.06, 0.35, 0.25, 0.35, 0.0, -1.0, 0.0, -1.0, 2.5, 0.5, 0.0, 1.0, 0.0, 0.2, 0.1],
         mono: true,
     },
     Preset {
         name: "Streaming Loud",
-        v: [2.2, 1.15, 0.05, 0.4, 0.5, 0.3, 2.0, -1.0, 0.0, 1.0, 1.5, 1.0, 1.0, 1.0, 0.0],
+        v: [2.2, 1.15, 0.05, 0.4, 0.5, 0.3, 2.0, -1.0, 0.0, 1.0, 1.5, 1.0, 1.0, 1.0, 0.0, 0.3, 0.0],
         mono: true,
     },
     Preset {
         name: "Vinyl Dust",
-        v: [3.0, 1.08, 0.14, 1.0, 0.2, 0.5, 0.0, -1.5, -1.0, 0.5, 0.8, 0.7, 1.0, 0.9, 0.0],
+        v: [3.0, 1.08, 0.14, 1.0, 0.2, 0.5, 0.0, -1.5, -1.0, 0.5, 0.8, 0.7, 1.0, 0.9, 0.0, 0.6, 0.3],
+        mono: true,
+    },
+    Preset {
+        name: "Analog Ghost",
+        v: [2.5, 1.1, 0.1, 1.0, 0.3, 0.45, 0.0, -1.2, -1.0, 0.0, 1.0, 0.75, 1.0, 0.9, 0.0, 0.8, 0.5],
         mono: true,
     },
 ];
@@ -319,6 +328,7 @@ impl NiceEguiApp for MexEditor {
                 (&self.params.smooth, "SMOOTH", "Tames harsh highs dynamically"),
                 (&self.params.output, "OUTPUT", "Output trim before the limiter"),
                 (&self.params.ceil, "CEILING", "Limiter ceiling"),
+                (&self.params.tube, "TUBE", "Tube warmth: even harmonics"),
             ]
             .iter()
             .enumerate()
@@ -347,6 +357,7 @@ impl NiceEguiApp for MexEditor {
                     "Saturation character: Clean / Warm / Hard",
                 ),
                 (&self.params.mix, "MIX", "Dry/wet parallel mix"),
+                (&self.params.haas, "HAAS", "Stereo micro-delay decorrelation"),
             ] {
                 knob_cell(ui, param, &setter, label, hint);
             }

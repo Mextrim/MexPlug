@@ -59,6 +59,10 @@ struct MexPlugParams {
     pub mix: FloatParam,
     #[id = "monitor"]
     pub monitor: FloatParam,
+    #[id = "tube"]
+    pub tube: FloatParam,
+    #[id = "haas"]
+    pub haas: FloatParam,
 }
 
 impl Default for MexPlug {
@@ -216,6 +220,20 @@ impl Default for MexPlugParams {
                 2 => String::from("Side"),
                 _ => String::from("Stereo"),
             })),
+            tube: FloatParam::new(
+                "Tube",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+            haas: FloatParam::new(
+                "Haas",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }
@@ -310,6 +328,8 @@ impl Plugin for MexPlug {
                 style: self.params.style.smoothed.next(),
                 mix: self.params.mix.smoothed.next(),
                 monitor: self.params.monitor.smoothed.next(),
+                tube: self.params.tube.smoothed.next(),
+                haas: self.params.haas.smoothed.next(),
             };
 
             // Copy through a local array: gives simultaneous L/R access for
