@@ -1,0 +1,11 @@
+# .NET offline tool
+bin/
+obj/
+
+# Rust plugin
+daw-plugin/target/
+
+# Logs and scratch
+*.log
+test_out.txt
+bundle_out.txt

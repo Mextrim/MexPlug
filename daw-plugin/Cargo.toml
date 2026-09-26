@@ -1,0 +1,3 @@
+[workspace]
+members = ["mex_plug", "xtask"]
+resolver = "2"

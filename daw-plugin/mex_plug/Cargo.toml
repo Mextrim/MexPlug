@@ -1,0 +1,11 @@
+[package]
+name = "mex_plug"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+name = "mex_plug"
+crate-type = ["cdylib"]
+
+[dependencies]
+nice-plug = { version = "0.4", features = ["assert_process_allocs"] }
