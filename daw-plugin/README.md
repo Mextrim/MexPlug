@@ -1,4 +1,14 @@
-# MexPlug — VST3/CLAP плагин (v0.3.0)
+# MexPlug — VST3/CLAP плагин (v0.4.0)
+
+## Установка за 1 минуту (без сборки, для FL Studio)
+
+1. Скачай **MexPlug_FL_vX.Y.Z.zip** со страницы
+   [Releases](https://github.com/Mextrim/MexPlug/releases).
+2. Распакуй ZIP в любую папку.
+3. Запусти **INSTALL.bat** (сам запросит права администратора).
+4. В FL Studio: Options → Manage plugins → Find plugins → ищи **MexPlug**.
+
+## Установка из исходников (для разработчиков)
 
 Панчевое авто-сведение + аналоговая живость. Реалтайм-версия офлайн-обрабатывалки
 (`Program.cs` в корне проекта). Фреймворк: [nice-plug](https://codeberg.org/RustAudio/nice-plug) 0.4.
@@ -11,7 +21,7 @@
 - `mex_plug.vst3/` — VST3 (FL Studio, Ableton, Cubase, Studio One, Reaper, ...).
 - `mex_plug.clap` — CLAP (Bitwig, FL Studio 21+, Reaper, ...).
 
-## Установка (Windows x64)
+## Сборка из исходников (Windows x64)
 
 Проще всего: запусти `BUILD_PLUGIN.bat` в корне проекта —
 соберёт release, удалит старый `fl_human_mix` и разложит новые бандлы
@@ -42,10 +52,10 @@ glue 2:1 → лимитер. Все ручки сглажены (30 мс), ав�
 
 ## Интерфейс
 
-Свой тёмный GUI (egui): 8 кастомных ручек (drag — крутить, double-click — сброс,
-shift — точно), тумблер Mono Bass, стерео-метр выхода с залипающим
-индикатором клипа (клик — сбросить). Параметры также доступны через
-автоматизацию DAW как обычно.
+Минималистичный светлый GUI (egui): 8 тонких ручек (drag — крутить,
+double-click — сброс, shift — точно), тумблер Mono Bass, тонкий стерео-метр
+выхода с залипающим индикатором клипа (клик — сбросить). Параметры также
+доступны через автоматизацию DAW как обычно.
 
 ID старых параметров (`drive/width/room/human/output`) не менялись.
 
