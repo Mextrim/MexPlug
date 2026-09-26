@@ -1,4 +1,7 @@
 # MexPlug — punchy auto-mix + analog liveliness (VST3/CLAP)
+<img width="1280" height="688" alt="image" src="https://github.com/user-attachments/assets/3c5bed82-ab0c-4a85-9899-7bbdafb6b825" />
+<img width="1280" height="688" alt="image" src="https://github.com/user-attachments/assets/d0a49e15-80b4-4c1b-a3ee-734381d88d5c" />
+<img width="1280" height="688" alt="image" src="https://github.com/user-attachments/assets/e12948a3-0ee2-4418-9ac7-7d41f33c5eac" />
 
 Плагин для всех major DAW на Windows: авто-сведение и «аналоговая живость»
 для стерильных ИИ-треков. Тёмная сторона не понадобится — только 14 ручек,
