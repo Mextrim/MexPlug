@@ -1,5 +1,5 @@
-//! MexPlug editor (egui), Flat UI theme:
-//! wet asphalt slate, clouds text, turquoise accent, flat fills, no gradients.
+//! MexPlug editor (egui): dark hardware unit look —
+//! near-black metal, cream labels, amber glow, knurled knobs.
 //! Slim knobs, preset bar with A/B compare, thin stereo meter, Mono Bass switch.
 
 use atomic_float::AtomicF32;
@@ -17,15 +17,20 @@ use super::MexPlugParams;
 
 pub const EDITOR_SIZE: LogicalSize<f32> = LogicalSize::new(920.0, 510.0);
 
-// Palette: Flat UI — wet asphalt slate, clouds text, turquoise accent.
+// Palette: dark hardware unit — near-black metal, cream labels,
+// amber glow accents, green-eyed details where they count.
 // (Const names kept stable; only values define the theme.)
-const BG: Color32 = Color32::from_rgb(44, 62, 80);
-const INK: Color32 = Color32::from_rgb(236, 240, 241);
-const MUTED: Color32 = Color32::from_rgb(149, 165, 166);
-const LINE: Color32 = Color32::from_rgb(52, 73, 94);
-const ACCENT: Color32 = Color32::from_rgb(26, 188, 156);
-const ACCENT_HOT: Color32 = Color32::from_rgb(72, 201, 176);
-const BAD: Color32 = Color32::from_rgb(231, 76, 60);
+const BG: Color32 = Color32::from_rgb(11, 12, 14);
+const INK: Color32 = Color32::from_rgb(233, 226, 204);
+const MUTED: Color32 = Color32::from_rgb(154, 147, 127);
+const LINE: Color32 = Color32::from_rgb(38, 40, 45);
+const ACCENT: Color32 = Color32::from_rgb(245, 165, 36);
+const ACCENT_HOT: Color32 = Color32::from_rgb(255, 184, 77);
+const BAD: Color32 = Color32::from_rgb(229, 72, 47);
+// Hardware-only tones (knob bodies, knurling).
+const DISC: Color32 = Color32::from_rgb(28, 30, 34);
+const DISC_IN: Color32 = Color32::from_rgb(38, 41, 46);
+const TICK: Color32 = Color32::from_rgb(78, 81, 90);
 
 /// Plain-value snapshot of all automatable params (A/B slots + presets).
 /// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor,tube,haas.
@@ -229,7 +234,7 @@ impl NiceEguiApp for MexEditor {
             return;
         };
 
-        // Flat UI theme: dark slate, explicit fills everywhere.
+        // Hardware theme: near-black metal, explicit fills everywhere.
         // The background rect is painted manually so the look never depends
         // on the host window clear color.
         let mut vis = egui::Visuals::dark();
@@ -239,8 +244,8 @@ impl NiceEguiApp for MexEditor {
         vis.override_text_color = Some(INK);
         vis.widgets.noninteractive.bg_fill = BG;
         vis.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
-        vis.widgets.inactive.bg_fill = LINE;
-        vis.widgets.hovered.bg_fill = Color32::from_rgb(62, 87, 113);
+        vis.widgets.inactive.bg_fill = Color32::from_rgb(27, 29, 32);
+        vis.widgets.hovered.bg_fill = Color32::from_rgb(38, 41, 46);
         vis.widgets.active.bg_fill = ACCENT;
         vis.widgets.active.fg_stroke = Stroke::new(1.5, BG);
         vis.selection.bg_fill = ACCENT;
@@ -249,11 +254,6 @@ impl NiceEguiApp for MexEditor {
 
         let bg_rect = ui.available_rect_before_wrap();
         ui.painter().rect_filled(bg_rect, 0.0, BG);
-        // Turquoise top rule: the Flat UI signature line.
-        let mut rule = bg_rect;
-        rule.set_bottom(rule.top() + 2.0);
-        ui.painter().rect_filled(rule, 0.0, ACCENT);
-        ui.add_space(4.0);
 
         let setter = gui.ctx.param_setter();
 
@@ -386,8 +386,8 @@ impl NiceEguiApp for MexEditor {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new("drag · double-click resets · shift = fine")
-                        .size(11.0)
+                    RichText::new("drag · dbl-click = reset · shift = fine")
+                        .size(10.0)
                         .color(MUTED),
                 );
             });
@@ -530,48 +530,65 @@ fn param_knob(
         norm = def;
     }
 
-    // Paint: thin 270° sweep, needle, dot. Nothing else.
+    // Paint: knurled metal body, amber sweep, cream needle. Hardware look.
     let p = ui.painter();
     let center = rect.center();
-    let radius = diameter / 2.0 - 4.0;
+    let radius = diameter / 2.0 - 9.0;
     let a0 = 0.75 * PI;
     let a1 = 2.25 * PI;
     let ang = a0 + norm * 1.5 * PI;
     let hot = response.hovered() || response.dragged();
 
-    arc_line(p, center, radius, a0, a1, Stroke::new(2.5, LINE));
+    // Knurling: 24 ticks around the full circle.
+    for k in 0..24 {
+        let dir = Vec2::angled(k as f32 / 24.0 * 2.0 * PI);
+        p.line_segment(
+            [
+                center + dir * (radius + 3.0),
+                center + dir * (radius + 5.5),
+            ],
+            Stroke::new(1.0, TICK),
+        );
+    }
+    // Two-tone body.
+    p.circle_filled(center, radius, DISC);
+    p.circle_filled(center, radius - 6.0, DISC_IN);
+
+    // Scale arc on the body edge, min/mid/max ticks outside the knurling.
+    let arc_r = radius - 2.0;
+    arc_line(p, center, arc_r, a0, a1, Stroke::new(3.0, LINE));
     // Rounded cap where the track starts.
-    p.circle_filled(center + Vec2::angled(a0) * radius, 1.25, LINE);
+    p.circle_filled(center + Vec2::angled(a0) * arc_r, 1.5, LINE);
     if norm > 0.002 {
         arc_line(
             p,
             center,
-            radius,
+            arc_r,
             a0,
             ang,
-            Stroke::new(2.5, if hot { ACCENT_HOT } else { ACCENT }),
+            Stroke::new(3.0, if hot { ACCENT_HOT } else { ACCENT }),
         );
         // Rounded cap at the live value end.
         p.circle_filled(
-            center + Vec2::angled(ang) * radius,
-            1.25,
+            center + Vec2::angled(ang) * arc_r,
+            1.5,
             if hot { ACCENT_HOT } else { ACCENT },
         );
     }
-    // Min / mid / max ticks.
+    // Min / mid / max ticks outside the knurling.
     for &ta in &[a0, a0 + 0.75 * PI, a1] {
         let dir = Vec2::angled(ta);
         p.line_segment(
             [
-                center + dir * (radius + 4.0),
-                center + dir * (radius + 7.0),
+                center + dir * (radius + 6.0),
+                center + dir * (radius + 8.5),
             ],
             Stroke::new(1.5, MUTED),
         );
     }
     let dir = Vec2::angled(ang);
     p.line_segment(
-        [center, center + dir * (radius - 7.0)],
+        [center, center + dir * (radius - 8.0)],
         Stroke::new(2.0, INK),
     );
     p.circle_filled(center, 2.5, if hot { ACCENT_HOT } else { ACCENT });
