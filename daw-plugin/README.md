@@ -1,4 +1,4 @@
-# MexPlug — VST3/CLAP плагин (v0.7.0)
+# MexPlug — VST3/CLAP плагин (v0.7.1)
 
 ## Установка за 1 минуту (без сборки, для FL Studio)
 
@@ -101,9 +101,12 @@ ID старых параметров (`drive/width/room/human/output`) не ме
 
 ## Проверено
 
-- `cargo test -p mex_plug`: 7 тестов (finite+потолок лимитера mono/stereo,
-  эффект меняет сигнал, тишина стабильна, mono bass складывает противофазный
-  низ, punch бустит атаку, smooth давит жесткие верхи, ceiling держится).
+- `cargo test -p mex_plug`: 17 тестов — вся цепь и каждая новая стадия
+  (mono bass, punch, smooth, ceiling, input, bass, air, glue, style, mix,
+  monitor, GR-метр, tube через Гёртцеля, haas).
+- `cargo clippy`: ноль варнингов.
+- DSP: ≈0.33 мкс на стерео-фрейм @48 кГц при полной цепи (<2% ядра CPU).
+  Ноль аллокаций на аудио-потоке после `activate()`.
 - pluginval, strictness 5: SUCCESS (включая Editor-тест: окно создаётся).
 
 ## Что НЕ покрыто (и почему)

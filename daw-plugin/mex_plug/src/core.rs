@@ -208,6 +208,14 @@ pub struct Core {
     haas_len: usize,
     tube_dc_c: f64,
     last_gr: f32,
+    // Coefficient caches: shelves/ceiling are recomputed only when their
+    // smoothed params actually change (NaN = "not computed yet").
+    cached_lows: BiquadCoef,
+    cached_highs: BiquadCoef,
+    cached_ceil: f64,
+    last_bass_db: f32,
+    last_air_db: f32,
+    last_ceil_db: f32,
     sustain_c: f64,
     smooth_lp_c: f64,
     smooth_atk: f64,
@@ -229,6 +237,7 @@ pub struct Core {
 // Fixed chain constants (match the offline tool).
 const GLUE_THRESH: f64 = 0.1258925411794167; // 10^(-18/20)
 const GLUE_MAKEUP: f64 = 1.4125375446227544; // 10^(+3/20)
+const NOISE_BASE: f64 = 3.1622776601683795e-4; // 10^(-70/20), tape noise ref
 const SMOOTH_THRESH: f64 = 0.1; // ~-20 dBFS HF detector threshold
 const DC_R: f64 = 0.995;
 
@@ -246,6 +255,12 @@ impl Core {
             haas_len: 0,
             tube_dc_c: 0.0,
             last_gr: 1.0,
+            cached_lows: BiquadCoef::default(),
+            cached_highs: BiquadCoef::default(),
+            cached_ceil: 1.0,
+            last_bass_db: f32::NAN,
+            last_air_db: f32::NAN,
+            last_ceil_db: f32::NAN,
             sustain_c: 0.0,
             smooth_lp_c: 0.0,
             smooth_atk: 0.0,
@@ -310,6 +325,9 @@ impl Core {
         // Haas micro-delay line on the right channel (up to 1.5 ms).
         self.haas_len = (sr * 0.0015).ceil() as usize + 4;
         self.tube_dc_c = (-TAU * 5.0 / sr).exp();
+        // Shelves depend on the sample rate: force recompute next frame.
+        self.last_bass_db = f32::NAN;
+        self.last_air_db = f32::NAN;
         for ch in self.chan.iter_mut() {
             ch.wow_buf = vec![0.0f32; self.wow_len];
             ch.dry = vec![0.0f32; self.dry_len];
@@ -409,9 +427,26 @@ impl Core {
         let n = n.min(2);
         let drive = p.drive.max(0.5) as f64;
         let sat_norm = (drive * 0.9).tanh().max(1e-6);
-        // Bass/Air shelves follow their smoothed params (recomputed per frame).
-        let lows_c = lowshelf(self.sr, 100.0, 1.0, p.bass_db.clamp(-6.0, 6.0) as f64);
-        let highs_c = highshelf(self.sr, 8200.0, 0.8, p.air_db.clamp(0.0, 3.0) as f64);
+        // Bass/Air shelves follow their smoothed params; coefs are cached
+        // and recomputed only when the value actually changes.
+        let bass_want = p.bass_db.clamp(-6.0, 6.0);
+        let lows_c = if bass_want != self.last_bass_db {
+            let c = lowshelf(self.sr, 100.0, 1.0, bass_want as f64);
+            self.last_bass_db = bass_want;
+            self.cached_lows = c;
+            c
+        } else {
+            self.cached_lows
+        };
+        let air_want = p.air_db.clamp(0.0, 3.0);
+        let highs_c = if air_want != self.last_air_db {
+            let c = highshelf(self.sr, 8200.0, 0.8, air_want as f64);
+            self.last_air_db = air_want;
+            self.cached_highs = c;
+            c
+        } else {
+            self.cached_highs
+        };
         let style = (p.style.round() as i32).clamp(0, 2);
 
         // Stage 0: input trim (tapped to the dry line), then Stage 1: DC-block + EQ.
@@ -499,12 +534,16 @@ impl Core {
 
         // Stage 4c: Haas micro-delay on the right channel (up to 1.5 ms).
         // Decorrelates the stereo image; check mono compatibility with Mid.
+        // The line is always fed so enabling Haas does not click.
         let haas = p.haas.clamp(0.0, 1.0);
-        if haas > 0.001 && n == 2 && self.haas_len > 0 {
-            let d = ((haas as f64 * 0.0015 * self.sr).round() as usize).min(self.haas_len - 1);
-            let rpos = (self.haas_pos + self.haas_len - d) % self.haas_len;
+        if n == 2 && self.haas_len > 0 {
             self.chan[1].haas_buf[self.haas_pos] = s[1];
-            s[1] = self.chan[1].haas_buf[rpos];
+            if haas > 0.001 {
+                let d =
+                    ((haas as f64 * 0.0015 * self.sr).round() as usize).min(self.haas_len - 1);
+                let rpos = (self.haas_pos + self.haas_len - d) % self.haas_len;
+                s[1] = self.chan[1].haas_buf[rpos];
+            }
             self.haas_pos = (self.haas_pos + 1) % self.haas_len;
         }
 
@@ -532,10 +571,7 @@ impl Core {
             for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
                 let buf = &mut ch.wow_buf;
                 buf[self.wow_pos] = *dst;
-                let mut rpos = self.wow_pos as f64 - dly;
-                while rpos < 0.0 {
-                    rpos += len;
-                }
+                let rpos = (self.wow_pos as f64 - dly).rem_euclid(len);
                 let p0 = rpos.floor() as usize % self.wow_len;
                 let p1 = (p0 + 1) % self.wow_len;
                 let fr = (rpos - rpos.floor()) as f32;
@@ -595,7 +631,7 @@ impl Core {
 
         // Stage 9: tape noise (fresh RNG draw per channel, same as before).
         if human > 0.01 {
-            let noise_amp = 10.0f64.powf(-70.0 / 20.0) * (0.4 + human);
+            let noise_amp = NOISE_BASE * (0.4 + human);
             for (dst, c) in s.iter_mut().take(n).zip(0..) {
                 let w = self.next_u01() * 2.0 - 1.0;
                 let ch = &mut self.chan[c];
@@ -617,7 +653,7 @@ impl Core {
             }
             let mut gr = 1.0;
             if self.glue_env > GLUE_THRESH {
-                gr = (GLUE_THRESH / self.glue_env).powf(1.0 - 1.0 / 2.0);
+                gr = (GLUE_THRESH / self.glue_env).sqrt();
             }
             // Glue amount scales the reduction (1.0 = full glue as before).
             let gr_mix = 1.0 + (gr - 1.0) * p.glue.clamp(0.0, 1.0) as f64;
@@ -628,9 +664,17 @@ impl Core {
             }
         }
 
-        // Stage 11: peak limiter at the adjustable ceiling.
+        // Stage 11: peak limiter at the adjustable ceiling (cached).
         {
-            let ceil = 10.0f64.powf(p.ceil_db.clamp(-3.0, -0.1) as f64 / 20.0);
+            let ceil_want = p.ceil_db.clamp(-3.0, -0.1);
+            let ceil = if ceil_want != self.last_ceil_db {
+                let c = 10.0f64.powf(ceil_want as f64 / 20.0);
+                self.last_ceil_db = ceil_want;
+                self.cached_ceil = c;
+                c
+            } else {
+                self.cached_ceil
+            };
             let mut det = 0.0f64;
             for v in s.iter().take(n) {
                 det = det.max(v.abs() as f64);
