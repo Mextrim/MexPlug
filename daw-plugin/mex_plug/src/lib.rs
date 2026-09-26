@@ -63,6 +63,8 @@ struct MexPlugParams {
     pub tube: FloatParam,
     #[id = "haas"]
     pub haas: FloatParam,
+    #[id = "theme"]
+    pub theme: FloatParam,
 }
 
 impl Default for MexPlug {
@@ -234,6 +236,22 @@ impl Default for MexPlugParams {
             )
             .with_smoother(SmoothingStyle::Linear(30.0))
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
+            // GUI-only theme switch: hidden from the host UI, persisted
+            // with the project state, settable from our own editor.
+            theme: FloatParam::new(
+                "Theme",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 4.0 },
+            )
+            .with_step_size(1.0)
+            .hide()
+            .with_value_to_string(Arc::new(|v: f32| match v.round() as i32 {
+                1 => String::from("White"),
+                2 => String::from("Black"),
+                3 => String::from("Bootstrap"),
+                4 => String::from("Flat"),
+                _ => String::from("Hardware"),
+            })),
         }
     }
 }

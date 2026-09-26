@@ -17,20 +17,112 @@ use super::MexPlugParams;
 
 pub const EDITOR_SIZE: LogicalSize<f32> = LogicalSize::new(920.0, 510.0);
 
-// Palette: dark hardware unit — near-black metal, cream labels,
-// amber glow accents, green-eyed details where they count.
-// (Const names kept stable; only values define the theme.)
-const BG: Color32 = Color32::from_rgb(11, 12, 14);
-const INK: Color32 = Color32::from_rgb(233, 226, 204);
-const MUTED: Color32 = Color32::from_rgb(154, 147, 127);
-const LINE: Color32 = Color32::from_rgb(38, 40, 45);
-const ACCENT: Color32 = Color32::from_rgb(245, 165, 36);
-const ACCENT_HOT: Color32 = Color32::from_rgb(255, 184, 77);
-const BAD: Color32 = Color32::from_rgb(229, 72, 47);
-// Hardware-only tones (knob bodies, knurling).
-const DISC: Color32 = Color32::from_rgb(28, 30, 34);
-const DISC_IN: Color32 = Color32::from_rgb(38, 41, 46);
-const TICK: Color32 = Color32::from_rgb(78, 81, 90);
+// Palette: five switchable themes. Hardware is the default.
+#[derive(Clone, Copy)]
+struct Theme {
+    name: &'static str,
+    dark: bool,
+    bg: Color32,
+    ink: Color32,
+    muted: Color32,
+    line: Color32,
+    accent: Color32,
+    hot: Color32,
+    bad: Color32,
+    disc: Color32,
+    disc_in: Color32,
+    tick: Color32,
+    btn: Color32,
+    btn_hover: Color32,
+}
+
+const THEMES: [Theme; 5] = [
+    // 0. Hardware: near-black metal, cream labels, amber glow.
+    Theme {
+        name: "Hardware",
+        dark: true,
+        bg: Color32::from_rgb(11, 12, 14),
+        ink: Color32::from_rgb(233, 226, 204),
+        muted: Color32::from_rgb(154, 147, 127),
+        line: Color32::from_rgb(38, 40, 45),
+        accent: Color32::from_rgb(245, 165, 36),
+        hot: Color32::from_rgb(255, 184, 77),
+        bad: Color32::from_rgb(229, 72, 47),
+        disc: Color32::from_rgb(28, 30, 34),
+        disc_in: Color32::from_rgb(38, 41, 46),
+        tick: Color32::from_rgb(78, 81, 90),
+        btn: Color32::from_rgb(27, 29, 32),
+        btn_hover: Color32::from_rgb(38, 41, 46),
+    },
+    // 1. White: paper, ink text, terracotta accent.
+    Theme {
+        name: "White",
+        dark: false,
+        bg: Color32::from_rgb(245, 244, 240),
+        ink: Color32::from_rgb(26, 28, 30),
+        muted: Color32::from_rgb(139, 142, 148),
+        line: Color32::from_rgb(226, 224, 217),
+        accent: Color32::from_rgb(192, 86, 33),
+        hot: Color32::from_rgb(214, 104, 44),
+        bad: Color32::from_rgb(200, 48, 48),
+        disc: Color32::from_rgb(232, 230, 223),
+        disc_in: Color32::from_rgb(255, 255, 255),
+        tick: Color32::from_rgb(170, 168, 160),
+        btn: Color32::from_rgb(255, 255, 255),
+        btn_hover: Color32::from_rgb(238, 236, 229),
+    },
+    // 2. Black: pure OLED black, monochrome + amber signal color.
+    Theme {
+        name: "Black",
+        dark: true,
+        bg: Color32::from_rgb(0, 0, 0),
+        ink: Color32::from_rgb(242, 242, 242),
+        muted: Color32::from_rgb(138, 138, 138),
+        line: Color32::from_rgb(34, 34, 34),
+        accent: Color32::from_rgb(255, 179, 0),
+        hot: Color32::from_rgb(255, 207, 77),
+        bad: Color32::from_rgb(255, 59, 48),
+        disc: Color32::from_rgb(22, 22, 22),
+        disc_in: Color32::from_rgb(31, 31, 31),
+        tick: Color32::from_rgb(58, 58, 58),
+        btn: Color32::from_rgb(20, 20, 20),
+        btn_hover: Color32::from_rgb(36, 36, 36),
+    },
+    // 3. Bootstrap: light gray, dark body text, primary blue.
+    Theme {
+        name: "Bootstrap",
+        dark: false,
+        bg: Color32::from_rgb(248, 249, 250),
+        ink: Color32::from_rgb(33, 37, 41),
+        muted: Color32::from_rgb(108, 117, 125),
+        line: Color32::from_rgb(222, 226, 230),
+        accent: Color32::from_rgb(13, 110, 253),
+        hot: Color32::from_rgb(61, 139, 253),
+        bad: Color32::from_rgb(220, 53, 69),
+        disc: Color32::from_rgb(233, 236, 239),
+        disc_in: Color32::from_rgb(255, 255, 255),
+        tick: Color32::from_rgb(173, 181, 189),
+        btn: Color32::from_rgb(255, 255, 255),
+        btn_hover: Color32::from_rgb(232, 234, 237),
+    },
+    // 4. Flat: wet asphalt slate, clouds, turquoise.
+    Theme {
+        name: "Flat",
+        dark: true,
+        bg: Color32::from_rgb(44, 62, 80),
+        ink: Color32::from_rgb(236, 240, 241),
+        muted: Color32::from_rgb(149, 165, 166),
+        line: Color32::from_rgb(52, 73, 94),
+        accent: Color32::from_rgb(26, 188, 156),
+        hot: Color32::from_rgb(72, 201, 176),
+        bad: Color32::from_rgb(231, 76, 60),
+        disc: Color32::from_rgb(52, 73, 94),
+        disc_in: Color32::from_rgb(62, 87, 113),
+        tick: Color32::from_rgb(93, 122, 147),
+        btn: Color32::from_rgb(52, 73, 94),
+        btn_hover: Color32::from_rgb(62, 87, 113),
+    },
+];
 
 /// Plain-value snapshot of all automatable params (A/B slots + presets).
 /// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor,tube,haas.
@@ -234,34 +326,22 @@ impl NiceEguiApp for MexEditor {
             return;
         };
 
-        // Hardware theme: near-black metal, explicit fills everywhere.
-        // The background rect is painted manually so the look never depends
-        // on the host window clear color.
-        let mut vis = egui::Visuals::dark();
-        vis.dark_mode = true;
-        vis.panel_fill = BG;
-        vis.window_fill = BG;
-        vis.override_text_color = Some(INK);
-        vis.widgets.noninteractive.bg_fill = BG;
-        vis.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
-        vis.widgets.inactive.bg_fill = Color32::from_rgb(27, 29, 32);
-        vis.widgets.hovered.bg_fill = Color32::from_rgb(38, 41, 46);
-        vis.widgets.active.bg_fill = ACCENT;
-        vis.widgets.active.fg_stroke = Stroke::new(1.5, BG);
-        vis.selection.bg_fill = ACCENT;
-        vis.selection.stroke = Stroke::new(1.0, ACCENT);
-        ui.ctx().set_visuals(vis);
+        // Theme: picked by the hidden Theme param, painted explicitly so the
+        // look never depends on the host window clear color.
+        let ti = self.params.theme.value().round().clamp(0.0, 4.0) as usize;
+        let th = THEMES[ti];
+        apply_visuals(ui, &th);
 
         let bg_rect = ui.available_rect_before_wrap();
-        ui.painter().rect_filled(bg_rect, 0.0, BG);
+        ui.painter().rect_filled(bg_rect, 0.0, th.bg);
 
         let setter = gui.ctx.param_setter();
 
         // Header: wordmark + stereo meter.
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(RichText::new("MexPlug").size(26.0).strong().color(INK));
-                ui.label(RichText::new("auto-mix · analog liveliness").size(11.0).color(MUTED));
+                ui.label(RichText::new("MexPlug").size(26.0).strong().color(th.ink));
+                ui.label(RichText::new("auto-mix · analog liveliness").size(11.0).color(th.muted));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 meter_block(
@@ -271,6 +351,7 @@ impl NiceEguiApp for MexEditor {
                     &self.gr_db,
                     &mut self.peak_hold,
                     &mut self.clip,
+                    th,
                 );
             });
         });
@@ -279,10 +360,10 @@ impl NiceEguiApp for MexEditor {
 
         // Preset bar + A/B.
         ui.horizontal(|ui| {
-            ui.label(RichText::new("PRESET").size(10.0).color(MUTED));
+            ui.label(RichText::new("PRESET").size(10.0).color(th.muted));
             for pr in PRESETS.iter() {
                 if ui
-                    .button(RichText::new(pr.name).size(11.0).color(INK))
+                    .button(RichText::new(pr.name).size(11.0).color(th.ink))
                     .clicked()
                 {
                     let applied = AbSlot {
@@ -304,7 +385,7 @@ impl NiceEguiApp for MexEditor {
                             RichText::new(name)
                                 .size(12.0)
                                 .strong()
-                                .color(if active { ACCENT } else { MUTED }),
+                                .color(if active { th.accent } else { th.muted }),
                         )
                         .clicked()
                     {
@@ -317,13 +398,13 @@ impl NiceEguiApp for MexEditor {
                         );
                     }
                 }
-                ui.label(RichText::new("A/B").size(10.0).color(MUTED));
+                ui.label(RichText::new("A/B").size(10.0).color(th.muted));
             });
         });
         ui.separator();
 
         // Row 1: main character knobs.
-        ui.label(RichText::new("CHARACTER").size(10.0).color(MUTED));
+        ui.label(RichText::new("CHARACTER").size(10.0).color(th.muted));
         ui.add_space(1.0);
         ui.horizontal(|ui| {
             ui.add_space(2.0);
@@ -344,13 +425,13 @@ impl NiceEguiApp for MexEditor {
                 if i == 4 {
                     ui.separator();
                 }
-                knob_cell(ui, param, &setter, label, hint);
+                knob_cell(ui, param, &setter, label, hint, th);
             }
         });
         ui.separator();
 
         // Row 2: input + tone + glue + style, mono switch on the right.
-        ui.label(RichText::new("TONE · DYNAMICS").size(10.0).color(MUTED));
+        ui.label(RichText::new("TONE · DYNAMICS").size(10.0).color(th.muted));
         ui.add_space(1.0);
         ui.horizontal(|ui| {
             ui.add_space(2.0);
@@ -367,28 +448,45 @@ impl NiceEguiApp for MexEditor {
                 (&self.params.mix, "MIX", "Dry/wet parallel mix"),
                 (&self.params.haas, "HAAS", "Stereo micro-delay decorrelation"),
             ] {
-                knob_cell(ui, param, &setter, label, hint);
+                knob_cell(ui, param, &setter, label, hint, th);
             }
             ui.separator();
             ui.add_space(4.0);
-            mono_switch(ui, &self.params.monobass, &setter);
+            mono_switch(ui, &self.params.monobass, &setter, th);
             ui.add_space(8.0);
-            monitor_seg(ui, &self.params.monitor, &setter);
+            monitor_seg(ui, &self.params.monitor, &setter, th);
         });
         ui.separator();
 
-        // Footer hints.
+        // Footer: version + theme dots + hints.
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
                     .size(10.0)
-                    .color(MUTED),
+                    .color(th.muted),
             );
+            ui.add_space(8.0);
+            for (i, t) in THEMES.iter().enumerate() {
+                let active = ti == i;
+                let (rect, resp) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::click());
+                let p = ui.painter();
+                p.circle_filled(rect.center(), 5.5, t.accent);
+                if active {
+                    p.circle_stroke(rect.center(), 6.5, Stroke::new(1.5, th.ink));
+                }
+                let clicked = resp.clicked();
+                resp.on_hover_text(t.name);
+                if clicked {
+                    setter.begin_set_parameter(&self.params.theme);
+                    setter.set_parameter(&self.params.theme, i as f32);
+                    setter.end_set_parameter(&self.params.theme);
+                }
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new("drag · dbl-click = reset · shift = fine")
                         .size(10.0)
-                        .color(MUTED),
+                        .color(th.muted),
                 );
             });
         });
@@ -396,6 +494,28 @@ impl NiceEguiApp for MexEditor {
         // Keep the meters alive while open.
         ui.request_repaint_after(std::time::Duration::from_millis(50));
     }
+}
+
+/// Build egui Visuals from a theme.
+fn apply_visuals(ui: &mut egui::Ui, th: &Theme) {
+    let mut vis = if th.dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
+    vis.dark_mode = th.dark;
+    vis.panel_fill = th.bg;
+    vis.window_fill = th.bg;
+    vis.override_text_color = Some(th.ink);
+    vis.widgets.noninteractive.bg_fill = th.bg;
+    vis.widgets.noninteractive.bg_stroke = Stroke::new(1.0, th.line);
+    vis.widgets.inactive.bg_fill = th.btn;
+    vis.widgets.hovered.bg_fill = th.btn_hover;
+    vis.widgets.active.bg_fill = th.accent;
+    vis.widgets.active.fg_stroke = Stroke::new(1.5, th.bg);
+    vis.selection.bg_fill = th.accent;
+    vis.selection.stroke = Stroke::new(1.0, th.accent);
+    ui.ctx().set_visuals(vis);
 }
 
 /// Stereo output meter + glue reduction meter, clip latch LED (click to clear).
@@ -407,6 +527,7 @@ fn meter_block(
     gr_db: &Arc<AtomicF32>,
     peak_hold: &mut [f32; 2],
     clip: &mut bool,
+    th: Theme,
 ) {
     let l = peak_l.load(Ordering::Relaxed);
     let r = peak_r.load(Ordering::Relaxed);
@@ -423,48 +544,48 @@ fn meter_block(
     };
 
     ui.vertical(|ui| {
-        meter_bar(ui, "L", ldb, 140.0, &mut peak_hold[0]);
+        meter_bar(ui, "L", ldb, 140.0, &mut peak_hold[0], th);
         ui.add_space(3.0);
-        meter_bar(ui, "R", rdb, 140.0, &mut peak_hold[1]);
+        meter_bar(ui, "R", rdb, 140.0, &mut peak_hold[1], th);
         ui.add_space(3.0);
-        gr_bar(ui, gr_db.load(Ordering::Relaxed));
+        gr_bar(ui, gr_db.load(Ordering::Relaxed), th);
         ui.add_space(3.0);
         ui.horizontal(|ui| {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(11.0, 11.0), Sense::click());
             ui.painter().circle_filled(
                 rect.center(),
                 4.5,
-                if *clip { BAD } else { LINE },
+                if *clip { th.bad } else { th.line },
             );
             if resp.clicked() {
                 *clip = false;
             }
-            ui.label(RichText::new("CLIP").size(10.0).color(MUTED));
+            ui.label(RichText::new("CLIP").size(10.0).color(th.muted));
             ui.add_space(6.0);
             ui.label(
                 RichText::new(peak_txt)
                     .size(12.0)
-                    .color(if *clip { BAD } else { INK }),
+                    .color(if *clip { th.bad } else { th.ink }),
             );
         });
     });
 }
 
 /// Glue reduction bar, 0..-12 dB.
-fn gr_bar(ui: &mut egui::Ui, db: f32) {
+fn gr_bar(ui: &mut egui::Ui, db: f32, th: Theme) {
     let norm = ((-db) / 12.0).clamp(0.0, 1.0);
     let txt = format!("{db:.1} dB");
     ui.horizontal(|ui| {
-        ui.label(RichText::new("GR").size(10.0).color(MUTED));
+        ui.label(RichText::new("GR").size(10.0).color(th.muted));
         let (rect, _) = ui.allocate_exact_size(Vec2::new(140.0, 6.0), Sense::hover());
         let p = ui.painter();
-        p.rect_filled(rect, 2.0, LINE);
+        p.rect_filled(rect, 2.0, th.line);
         if norm > 0.002 {
             let mut fill = rect;
             fill.set_right(rect.left() + rect.width() * norm);
-            p.rect_filled(fill, 1.5, ACCENT);
+            p.rect_filled(fill, 1.5, th.accent);
         }
-        ui.label(RichText::new(txt).size(10.0).color(MUTED));
+        ui.label(RichText::new(txt).size(10.0).color(th.muted));
     })
     .response
     .on_hover_text("Glue compression depth");
@@ -477,20 +598,21 @@ fn knob_cell(
     setter: &ParamSetter,
     label: &str,
     hint: &'static str,
+    th: Theme,
 ) {
     ui.allocate_ui_with_layout(
         Vec2::new(80.0, 158.0),
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
-            ui.label(RichText::new(label).size(10.0).color(MUTED));
+            ui.label(RichText::new(label).size(10.0).color(th.muted));
             ui.add_space(1.0);
-            param_knob(ui, param, setter, 62.0, hint);
+            param_knob(ui, param, setter, 62.0, hint, th);
             ui.add_space(1.0);
             let shown = param.modulated_normalized_value();
             ui.label(
                 RichText::new(param.normalized_value_to_string(shown, true))
                     .size(12.0)
-                    .color(INK),
+                    .color(th.ink),
             );
         },
     );
@@ -503,6 +625,7 @@ fn param_knob(
     setter: &ParamSetter,
     diameter: f32,
     hint: &'static str,
+    th: Theme,
 ) {
     let mut norm = param.modulated_normalized_value();
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click_and_drag());
@@ -547,18 +670,18 @@ fn param_knob(
                 center + dir * (radius + 3.0),
                 center + dir * (radius + 5.5),
             ],
-            Stroke::new(1.0, TICK),
+            Stroke::new(1.0, th.tick),
         );
     }
     // Two-tone body.
-    p.circle_filled(center, radius, DISC);
-    p.circle_filled(center, radius - 6.0, DISC_IN);
+    p.circle_filled(center, radius, th.disc);
+    p.circle_filled(center, radius - 6.0, th.disc_in);
 
     // Scale arc on the body edge, min/mid/max ticks outside the knurling.
     let arc_r = radius - 2.0;
-    arc_line(p, center, arc_r, a0, a1, Stroke::new(3.0, LINE));
+    arc_line(p, center, arc_r, a0, a1, Stroke::new(3.0, th.line));
     // Rounded cap where the track starts.
-    p.circle_filled(center + Vec2::angled(a0) * arc_r, 1.5, LINE);
+    p.circle_filled(center + Vec2::angled(a0) * arc_r, 1.5, th.line);
     if norm > 0.002 {
         arc_line(
             p,
@@ -566,13 +689,13 @@ fn param_knob(
             arc_r,
             a0,
             ang,
-            Stroke::new(3.0, if hot { ACCENT_HOT } else { ACCENT }),
+            Stroke::new(3.0, if hot { th.hot } else { th.accent }),
         );
         // Rounded cap at the live value end.
         p.circle_filled(
             center + Vec2::angled(ang) * arc_r,
             1.5,
-            if hot { ACCENT_HOT } else { ACCENT },
+            if hot { th.hot } else { th.accent },
         );
     }
     // Min / mid / max ticks outside the knurling.
@@ -583,15 +706,15 @@ fn param_knob(
                 center + dir * (radius + 6.0),
                 center + dir * (radius + 8.5),
             ],
-            Stroke::new(1.5, MUTED),
+            Stroke::new(1.5, th.muted),
         );
     }
     let dir = Vec2::angled(ang);
     p.line_segment(
         [center, center + dir * (radius - 8.0)],
-        Stroke::new(2.0, INK),
+        Stroke::new(2.0, th.ink),
     );
-    p.circle_filled(center, 2.5, if hot { ACCENT_HOT } else { ACCENT });
+    p.circle_filled(center, 2.5, if hot { th.hot } else { th.accent });
     response.on_hover_text(hint);
 }
 
@@ -608,7 +731,14 @@ fn arc_line(p: &egui::Painter, center: Pos2, radius: f32, a0: f32, a1: f32, stro
 }
 
 /// Thin level bar with a falling peak-hold tick.
-fn meter_bar(ui: &mut egui::Ui, label: &str, peak_db: f32, width: f32, hold: &mut f32) {
+fn meter_bar(
+    ui: &mut egui::Ui,
+    label: &str,
+    peak_db: f32,
+    width: f32,
+    hold: &mut f32,
+    th: Theme,
+) {
     let norm = ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0);
     if norm > *hold {
         *hold = norm;
@@ -616,31 +746,31 @@ fn meter_bar(ui: &mut egui::Ui, label: &str, peak_db: f32, width: f32, hold: &mu
         *hold = (*hold - 0.02).max(norm);
     }
     ui.horizontal(|ui| {
-        ui.label(RichText::new(label).size(10.0).color(MUTED));
+        ui.label(RichText::new(label).size(10.0).color(th.muted));
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
         let p = ui.painter();
-        p.rect_filled(rect, 2.0, LINE);
+        p.rect_filled(rect, 2.0, th.line);
         if norm > 0.002 {
             let mut fill = rect;
             fill.set_right(rect.left() + rect.width() * norm);
             p.rect_filled(
                 fill,
                 1.5,
-                if peak_db > -1.0 { BAD } else { INK },
+                if peak_db > -1.0 { th.bad } else { th.ink },
             );
         }
         if *hold > 0.002 {
             let x = rect.left() + rect.width() * *hold;
             p.line_segment(
                 [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-                Stroke::new(1.5, INK),
+                Stroke::new(1.5, th.ink),
             );
         }
     });
 }
 
 /// Minimal toggle for Mono Bass.
-fn mono_switch(ui: &mut egui::Ui, param: &BoolParam, setter: &ParamSetter) {
+fn mono_switch(ui: &mut egui::Ui, param: &BoolParam, setter: &ParamSetter, th: Theme) {
     let on = param.value();
     ui.horizontal(|ui| {
         let (rect, response) = ui.allocate_exact_size(Vec2::new(38.0, 20.0), Sense::click());
@@ -651,24 +781,24 @@ fn mono_switch(ui: &mut egui::Ui, param: &BoolParam, setter: &ParamSetter) {
         }
         response.on_hover_text("Fold bass below 120 Hz to mono");
         let p = ui.painter();
-        p.rect_filled(rect, 10.0, LINE);
+        p.rect_filled(rect, 10.0, th.line);
         let cx = if on { rect.right() - 11.0 } else { rect.left() + 11.0 };
         p.circle_filled(
             egui::Pos2::new(cx, rect.center().y),
             7.0,
-            if on { ACCENT } else { MUTED },
+            if on { th.accent } else { th.muted },
         );
         ui.vertical(|ui| {
-            ui.label(RichText::new("MONO BASS").size(11.0).color(INK));
-            ui.label(RichText::new("lows below 120 Hz").size(10.0).color(MUTED));
+            ui.label(RichText::new("MONO BASS").size(11.0).color(th.ink));
+            ui.label(RichText::new("lows below 120 Hz").size(10.0).color(th.muted));
         });
     });
 }
 
 /// Segmented Stereo / Mid / Side monitor switch.
-fn monitor_seg(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter) {
+fn monitor_seg(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter, th: Theme) {
     ui.vertical(|ui| {
-        ui.label(RichText::new("MONITOR").size(11.0).color(INK));
+        ui.label(RichText::new("MONITOR").size(11.0).color(th.ink));
         ui.horizontal(|ui| {
             for (label, val) in [("ST", 0.0f32), ("M", 1.0), ("S", 2.0)] {
                 let active = (param.value() - val).abs() < 0.5;
@@ -676,7 +806,7 @@ fn monitor_seg(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter) {
                     RichText::new(label)
                         .size(11.0)
                         .strong()
-                        .color(if active { ACCENT } else { MUTED }),
+                        .color(if active { th.accent } else { th.muted }),
                 );
                 let clicked = resp.clicked();
                 resp.on_hover_text("Solo Mid / Side to check mono compatibility");
