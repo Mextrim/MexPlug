@@ -5,12 +5,12 @@
 
 !include "MUI2.nsh"
 
-Name "MexPlug v0.5.1"
-OutFile "MexPlug_Setup_v0.5.1.exe"
+Name "MexPlug v0.5.2"
+OutFile "MexPlug_Setup_v0.5.2.exe"
 RequestExecutionLevel admin
 Unicode True
 
-!define MUI_WELCOMEPAGE_TITLE "Установка MexPlug v0.5.1"
+!define MUI_WELCOMEPAGE_TITLE "Установка MexPlug v0.5.2"
 !define MUI_WELCOMEPAGE_TEXT "Этот мастер установит плагин MexPlug:$\r$\n$\r$\n- VST3 в Common Files\VST3$\r$\n- CLAP в Common Files\CLAP$\r$\n$\r$\nПосле установки сделай рескан плагинов в DAW."
 !define MUI_FINISHPAGE_TEXT "Готово! MexPlug установлен.$\r$\n$\r$\nFL Studio: Options -> Manage plugins -> Find plugins -> ищи MexPlug.$\r$\n$\r$\nНажмите «Готово», чтобы закрыть мастер."
 !define MUI_FINISHPAGE_NOAUTOCLOSE

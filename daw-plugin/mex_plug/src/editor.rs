@@ -1,5 +1,5 @@
-//! MexPlug editor (egui), minimalist light theme:
-//! paper background, ink text, hairline dividers, one terracotta accent.
+//! MexPlug editor (egui), Flat UI theme:
+//! wet asphalt slate, clouds text, turquoise accent, flat fills, no gradients.
 //! Slim knobs, preset bar with A/B compare, thin stereo meter, Mono Bass switch.
 
 use atomic_float::AtomicF32;
@@ -17,14 +17,15 @@ use super::MexPlugParams;
 
 pub const EDITOR_SIZE: LogicalSize<f32> = LogicalSize::new(760.0, 500.0);
 
-// Palette: warm paper, ink, hairlines, single terracotta accent.
-const BG: Color32 = Color32::from_rgb(245, 244, 240);
-const INK: Color32 = Color32::from_rgb(26, 28, 30);
-const MUTED: Color32 = Color32::from_rgb(139, 142, 148);
-const LINE: Color32 = Color32::from_rgb(226, 224, 217);
-const ACCENT: Color32 = Color32::from_rgb(192, 86, 33);
-const ACCENT_HOT: Color32 = Color32::from_rgb(214, 104, 44);
-const BAD: Color32 = Color32::from_rgb(200, 48, 48);
+// Palette: Flat UI — wet asphalt slate, clouds text, turquoise accent.
+// (Const names kept stable; only values define the theme.)
+const BG: Color32 = Color32::from_rgb(44, 62, 80);
+const INK: Color32 = Color32::from_rgb(236, 240, 241);
+const MUTED: Color32 = Color32::from_rgb(149, 165, 166);
+const LINE: Color32 = Color32::from_rgb(52, 73, 94);
+const ACCENT: Color32 = Color32::from_rgb(26, 188, 156);
+const ACCENT_HOT: Color32 = Color32::from_rgb(72, 201, 176);
+const BAD: Color32 = Color32::from_rgb(231, 76, 60);
 
 /// Plain-value snapshot of all automatable params (A/B slots + presets).
 /// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style.
@@ -200,14 +201,26 @@ impl NiceEguiApp for MexEditor {
             return;
         };
 
-        // Minimalist light theme.
-        let mut vis = egui::Visuals::light();
+        // Flat UI theme: dark slate, explicit fills everywhere.
+        // The background rect is painted manually so the look never depends
+        // on the host window clear color.
+        let mut vis = egui::Visuals::dark();
+        vis.dark_mode = true;
         vis.panel_fill = BG;
         vis.window_fill = BG;
         vis.override_text_color = Some(INK);
+        vis.widgets.noninteractive.bg_fill = BG;
         vis.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
+        vis.widgets.inactive.bg_fill = LINE;
+        vis.widgets.hovered.bg_fill = Color32::from_rgb(62, 87, 113);
+        vis.widgets.active.bg_fill = ACCENT;
+        vis.widgets.active.fg_stroke = Stroke::new(1.5, BG);
+        vis.selection.bg_fill = ACCENT;
+        vis.selection.stroke = Stroke::new(1.0, ACCENT);
         ui.ctx().set_visuals(vis);
-        ui.style_mut().visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
+
+        let bg_rect = ui.available_rect_before_wrap();
+        ui.painter().rect_filled(bg_rect, 0.0, BG);
 
         let setter = gui.ctx.param_setter();
 
