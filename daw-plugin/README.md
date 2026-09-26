@@ -8,24 +8,25 @@
 3. Запусти **INSTALL.bat** (сам запросит права администратора).
 4. В FL Studio: Options → Manage plugins → Find plugins → ищи **MexPlug**.
 
-## Установка из исходников (для разработчиков)
+## Для разработчиков
 
-Панчевое авто-сведение + аналоговая живость. Реалтайм-версия офлайн-обрабатывалки
-(`Program.cs` в корне проекта). Фреймворк: [nice-plug](https://codeberg.org/RustAudio/nice-plug) 0.4.
-Один код → два формата из одной сборки.
+Панчевое авто-сведение + аналоговая живость в реальном времени.
+Фреймворк: [nice-plug](https://codeberg.org/RustAudio/nice-plug) 0.4.
+Один код → два формата (VST3 + CLAP) из одной сборки.
 
-## Готовые бандлы
+Сборка:
 
-После `cargo xtask bundle mex_plug --release` лежат в `target/bundled/`:
+```
+cd daw-plugin
+cargo xtask bundle mex_plug --release
+```
+
+Готовые бандлы появятся в `daw-plugin/target/bundled/`:
 
 - `mex_plug.vst3/` — VST3 (FL Studio, Ableton, Cubase, Studio One, Reaper, ...).
 - `mex_plug.clap` — CLAP (Bitwig, FL Studio 21+, Reaper, ...).
 
-## Сборка из исходников (Windows x64)
-
-Проще всего: запусти `BUILD_PLUGIN.bat` в корне проекта —
-соберёт release, удалит старый `fl_human_mix` и разложит новые бандлы
-по системным папкам (запросит админа):
+Для установки разложи их по системным папкам (нужен админ):
 
 - `%ProgramFiles%\Common Files\VST3\mex_plug.vst3`
 - `%ProgramFiles%\Common Files\CLAP\mex_plug.clap`
