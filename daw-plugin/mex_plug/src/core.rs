@@ -5,8 +5,8 @@
 //! -> saturation (Clean/Warm/Hard) -> tube warmth (even harmonics)
 //! -> M/S width -> Haas micro-delay -> punch -> wow/flutter
 //! -> room -> smooth (de-harsh) -> tape noise -> glue 2:1 (amount)
-//! -> output trim -> limiter -> parallel mix (delay-compensated dry)
-//! -> monitor (Stereo/Mid/Side).
+//! -> output trim -> limiter -> dirt (bit reduction) -> parallel mix
+//! (delay-compensated dry) -> output balance -> monitor (Stereo/Mid/Side).
 //!
 //! Differences vs the offline version (honest list):
 //! - Wow/flutter uses a bounded delay line instead of whole-buffer resampling.
@@ -48,6 +48,12 @@ pub struct LiveParams {
     pub tube: f32,
     /// Haas micro-delay on the right channel 0..1 (0..1.5 ms).
     pub haas: f32,
+    /// Dirt: bit reduction 0..1 (16..6 bits, lo-fi crunch).
+    pub dirt: f32,
+    /// Glue sidechain high-pass in Hz (kicks don't pump the glue).
+    pub schp_fc: f32,
+    /// Output balance -1 (left) .. +1 (right).
+    pub balance: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -183,6 +189,7 @@ struct Channel {
     highs: Biquad,
     mhp1: Biquad,
     mhp2: Biquad,
+    schp: Biquad,
     dry: Vec<f32>,
     tube_dc: f64,
     haas_buf: Vec<f32>,
@@ -366,6 +373,7 @@ impl Core {
             ch.highs.clear();
             ch.mhp1.clear();
             ch.mhp2.clear();
+            ch.schp.clear();
             ch.sustain = 0.0;
             ch.smooth_lp = 0.0;
             for b in ch.wow_buf.iter_mut() {
@@ -641,10 +649,14 @@ impl Core {
         }
 
         // Stage 10: glue compressor, shared envelope (matches offline).
+        // The detector listens through a high-passed copy so kicks
+        // don't pump the whole mix (SC HP).
         {
+            let schp_c = highpass(self.sr, p.schp_fc.clamp(20.0, 500.0) as f64, 0.707);
             let mut det = 0.0f64;
-            for v in s.iter().take(n) {
-                det = det.max(v.abs() as f64);
+            for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
+                ch.schp.c = schp_c;
+                det = det.max(ch.schp.run(*dst as f64).abs());
             }
             if det > self.glue_env {
                 self.glue_env = self.glue_atk * self.glue_env + (1.0 - self.glue_atk) * det;
@@ -694,6 +706,16 @@ impl Core {
             }
         }
 
+        // Stage 11b: dirt — bit reduction for lo-fi crunch.
+        let dirt = p.dirt.clamp(0.0, 1.0);
+        if dirt > 0.001 {
+            let bits = (16.0 - (dirt * 10.0).round()) as i32;
+            let scale = (1i32 << bits.max(1)) as f32;
+            for dst in s.iter_mut().take(n) {
+                *dst = ((*dst * scale).round() / scale).clamp(-1.0, 1.0);
+            }
+        }
+
         // Stage 12: parallel mix with delay-compensated dry, then monitor.
         // The dry tap rides a fixed delay at the wow center, so dry/wet stay
         // aligned on average (wow wobbles a little around it in the blend).
@@ -724,6 +746,19 @@ impl Core {
                 s[0] = m.clamp(-1.0, 1.0) as f32;
             }
             self.dry_pos = (self.dry_pos + 1) % self.dry_len;
+        }
+
+        // Stage 12b: output balance (unity at center, gains never exceed 1).
+        let bal = p.balance.clamp(-1.0, 1.0) as f64;
+        if bal.abs() > 0.001 && n == 2 {
+            use std::f64::consts::FRAC_PI_2;
+            let (gl, gr) = if bal > 0.0 {
+                ((bal * FRAC_PI_2).cos(), 1.0)
+            } else {
+                (1.0, ((-bal) * FRAC_PI_2).cos())
+            };
+            s[0] = (s[0] as f64 * gl) as f32;
+            s[1] = (s[1] as f64 * gr) as f32;
         }
     }
 
@@ -776,6 +811,9 @@ mod tests {
             monitor: 0.0,
             tube: 0.3,
             haas: 0.0,
+            dirt: 0.0,
+            schp_fc: 20.0,
+            balance: 0.0,
         }
     }
 
@@ -1273,5 +1311,65 @@ mod tests {
         let d_on = run(1.0);
         assert!(d_off < 1e-6, "stereo not identical with haas off, {d_off}");
         assert!(d_on > 0.2, "haas did not decorrelate, {d_on}");
+    }
+
+    #[test]
+    fn dirt_quantizes_signal() {
+        // 6-bit outputs must sit on the 1/64 grid; dry path must not.
+        let meas = |dirt: f32| {
+            let mut p = isolated();
+            p.dirt = dirt;
+            let out = render_freq(2, 44100, &p, 1000.0, 0.4, 0.4);
+            let mut grid_err = 0.0f32;
+            for &v in out[0].iter().skip(11025) {
+                assert!(v.is_finite());
+                grid_err = grid_err.max((v * 64.0 - (v * 64.0).round()).abs());
+            }
+            (peak(&out), grid_err)
+        };
+        let (pk_on, err_on) = meas(1.0);
+        let (pk_off, err_off) = meas(0.0);
+        assert!(pk_on > 0.05 && pk_off > 0.05, "signal lost");
+        assert!(err_on < 1e-3, "dirt output not quantized, {err_on}");
+        assert!(err_off > 1e-3, "dry output unexpectedly quantized");
+    }
+
+    #[test]
+    fn schp_keeps_kick_out_of_detector() {
+        // 55 Hz thump: with SC HP at 500 Hz the detector goes blind,
+        // so the glue stops reducing and the output gets hotter.
+        let run = |fc: f32| {
+            let mut p = isolated();
+            p.schp_fc = fc;
+            peak(&render_freq(2, 44100, &p, 55.0, 0.7, 0.7))
+        };
+        let pk_open = run(20.0);
+        let pk_hp = run(500.0);
+        assert!(
+            pk_hp > pk_open * 1.2,
+            "sidechain HP has no effect, open={pk_open} hp={pk_hp}"
+        );
+    }
+
+    #[test]
+    fn balance_pans_output() {
+        // Identical stereo in, hard right: left must (nearly) vanish.
+        let run = |bal: f32| {
+            let mut p = isolated();
+            p.balance = bal;
+            render_freq(2, 44100, &p, 440.0, 0.5, 0.5)
+        };
+        let to_right = run(1.0);
+        let pk_l = peak(&[to_right[0].clone()]);
+        let pk_r = peak(&[to_right[1].clone()]);
+        assert!(pk_r > 0.2, "right channel lost");
+        assert!(pk_l < 0.05, "left channel not muted, {pk_l}");
+        let center = run(0.0);
+        let pk_cl = peak(&[center[0].clone()]);
+        let pk_cr = peak(&[center[1].clone()]);
+        assert!(
+            (pk_cl - pk_cr).abs() < 1e-6,
+            "center balance not equal, {pk_cl} vs {pk_cr}"
+        );
     }
 }

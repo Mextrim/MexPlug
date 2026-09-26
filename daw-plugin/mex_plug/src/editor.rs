@@ -15,7 +15,7 @@ use std::sync::{Arc, atomic::Ordering};
 
 use super::MexPlugParams;
 
-pub const EDITOR_SIZE: LogicalSize<f32> = LogicalSize::new(920.0, 510.0);
+pub const EDITOR_SIZE: LogicalSize<f32> = LogicalSize::new(920.0, 680.0);
 
 // Palette: five switchable themes. Hardware is the default.
 #[derive(Clone, Copy)]
@@ -125,10 +125,11 @@ const THEMES: [Theme; 5] = [
 ];
 
 /// Plain-value snapshot of all automatable params (A/B slots + presets).
-/// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor,tube,haas.
+/// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,
+/// style,mix,monitor,tube,haas,dirt,schp,balance.
 #[derive(Clone, Copy)]
 struct AbSlot {
-    v: [f32; 17],
+    v: [f32; 20],
     mono: bool,
 }
 
@@ -153,6 +154,9 @@ impl AbSlot {
                 p.monitor.value(),
                 p.tube.value(),
                 p.haas.value(),
+                p.dirt.value(),
+                p.schp.value(),
+                p.balance.value(),
             ],
             mono: p.monobass.value(),
         }
@@ -177,6 +181,9 @@ impl AbSlot {
             &p.monitor,
             &p.tube,
             &p.haas,
+            &p.dirt,
+            &p.schp,
+            &p.balance,
         ];
         for (param, &val) in ps.iter().zip(self.v.iter()) {
             setter.begin_set_parameter(*param);
@@ -191,51 +198,51 @@ impl AbSlot {
 
 struct Preset {
     name: &'static str,
-    v: [f32; 17],
+    v: [f32; 20],
     mono: bool,
 }
 
-// drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor,tube,haas
+// drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor,tube,haas,dirt,schp,balance
 // style: 0 = Clean, 1 = Warm, 2 = Hard. monitor: 0 = Stereo, 1 = Mid, 2 = Side.
 const PRESETS: [Preset; 8] = [
     Preset {
         name: "Gentle Polish",
-        v: [1.5, 1.12, 0.05, 0.4, 0.2, 0.3, 0.0, -1.0, 0.0, 0.0, 1.2, 0.6, 1.0, 1.0, 0.0, 0.3, 0.0],
+        v: [1.5, 1.12, 0.05, 0.4, 0.2, 0.3, 0.0, -1.0, 0.0, 0.0, 1.2, 0.6, 1.0, 1.0, 0.0, 0.3, 0.0, 0.0, 80.0, 0.0],
         mono: true,
     },
     Preset {
         name: "AI Rescue",
-        v: [2.4, 1.22, 0.08, 0.85, 0.35, 0.6, 0.0, -1.0, -1.0, -0.5, 1.0, 0.8, 1.0, 1.0, 0.0, 0.5, 0.2],
+        v: [2.4, 1.22, 0.08, 0.85, 0.35, 0.6, 0.0, -1.0, -1.0, -0.5, 1.0, 0.8, 1.0, 1.0, 0.0, 0.5, 0.2, 0.0, 150.0, 0.0],
         mono: true,
     },
     Preset {
         name: "Club Punch",
-        v: [2.8, 1.15, 0.04, 0.3, 0.7, 0.2, 1.0, -0.5, 0.0, 2.0, 1.8, 1.0, 2.0, 1.0, 0.0, 0.4, 0.0],
+        v: [2.8, 1.15, 0.04, 0.3, 0.7, 0.2, 1.0, -0.5, 0.0, 2.0, 1.8, 1.0, 2.0, 1.0, 0.0, 0.4, 0.0, 0.0, 60.0, 0.0],
         mono: true,
     },
     Preset {
         name: "Lo-Fi Warmth",
-        v: [3.2, 1.05, 0.12, 1.0, 0.15, 0.4, 0.0, -1.5, -2.0, 1.0, 0.5, 0.7, 1.0, 0.85, 0.0, 0.7, 0.3],
+        v: [3.2, 1.05, 0.12, 1.0, 0.15, 0.4, 0.0, -1.5, -2.0, 1.0, 0.5, 0.7, 1.0, 0.85, 0.0, 0.7, 0.3, 0.35, 100.0, 0.0],
         mono: true,
     },
     Preset {
         name: "Airy Clean",
-        v: [1.3, 1.28, 0.06, 0.35, 0.25, 0.35, 0.0, -1.0, 0.0, -1.0, 2.5, 0.5, 0.0, 1.0, 0.0, 0.2, 0.1],
+        v: [1.3, 1.28, 0.06, 0.35, 0.25, 0.35, 0.0, -1.0, 0.0, -1.0, 2.5, 0.5, 0.0, 1.0, 0.0, 0.2, 0.1, 0.0, 120.0, 0.0],
         mono: true,
     },
     Preset {
         name: "Streaming Loud",
-        v: [2.2, 1.15, 0.05, 0.4, 0.5, 0.3, 2.0, -1.0, 0.0, 1.0, 1.5, 1.0, 1.0, 1.0, 0.0, 0.3, 0.0],
+        v: [2.2, 1.15, 0.05, 0.4, 0.5, 0.3, 2.0, -1.0, 0.0, 1.0, 1.5, 1.0, 1.0, 1.0, 0.0, 0.3, 0.0, 0.0, 80.0, 0.0],
         mono: true,
     },
     Preset {
         name: "Vinyl Dust",
-        v: [3.0, 1.08, 0.14, 1.0, 0.2, 0.5, 0.0, -1.5, -1.0, 0.5, 0.8, 0.7, 1.0, 0.9, 0.0, 0.6, 0.3],
+        v: [3.0, 1.08, 0.14, 1.0, 0.2, 0.5, 0.0, -1.5, -1.0, 0.5, 0.8, 0.7, 1.0, 0.9, 0.0, 0.6, 0.3, 0.25, 150.0, 0.0],
         mono: true,
     },
     Preset {
         name: "Analog Ghost",
-        v: [2.5, 1.1, 0.1, 1.0, 0.3, 0.45, 0.0, -1.2, -1.0, 0.0, 1.0, 0.75, 1.0, 0.9, 0.0, 0.8, 0.5],
+        v: [2.5, 1.1, 0.1, 1.0, 0.3, 0.45, 0.0, -1.2, -1.0, 0.0, 1.0, 0.75, 1.0, 0.9, 0.0, 0.8, 0.5, 0.15, 120.0, 0.0],
         mono: true,
     },
 ];
@@ -250,6 +257,7 @@ pub struct MexEditor {
     clip: bool,
     ab: [AbSlot; 2],
     ab_active: usize,
+    dice_seed: u64,
     gui: Option<OpenGui>,
 }
 
@@ -266,6 +274,11 @@ impl MexEditor {
         gr_db: Arc<AtomicF32>,
     ) -> Self {
         let slot = AbSlot::capture(&params);
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x12345)
+            ^ 0x9E3779B97F4A7E15;
         Self {
             params,
             peak_l,
@@ -275,7 +288,48 @@ impl MexEditor {
             clip: false,
             ab: [slot, slot],
             ab_active: 0,
+            dice_seed: seed,
             gui: None,
+        }
+    }
+
+    /// Musical random settings (GUI thread only).
+    fn dice_roll(seed: &mut u64) -> AbSlot {
+        fn next(s: &mut u64) -> f64 {
+            let mut x = *s;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *s = x;
+            ((x >> 11) as f64) / 9007199254740992.0
+        }
+        fn range(s: &mut u64, lo: f32, hi: f32) -> f32 {
+            lo + (hi - lo) * next(s) as f32
+        }
+        AbSlot {
+            v: [
+                range(seed, 1.2, 3.2),   // drive
+                range(seed, 1.0, 1.35),  // width
+                range(seed, 0.02, 0.14), // room
+                range(seed, 0.2, 1.0),   // human
+                range(seed, 0.1, 0.8),   // punch
+                range(seed, 0.1, 0.7),   // smooth
+                range(seed, -2.0, 2.0),  // output
+                range(seed, -1.5, -0.5), // ceil
+                range(seed, -3.0, 3.0),  // input
+                range(seed, -2.0, 3.0),  // bass
+                range(seed, 0.5, 2.8),   // air
+                range(seed, 0.4, 1.0),   // glue
+                (next(seed) * 3.0).floor() as f32, // style
+                range(seed, 0.7, 1.0),   // mix
+                0.0,                     // monitor: always stereo
+                range(seed, 0.1, 0.7),   // tube
+                range(seed, 0.0, 0.5),   // haas
+                range(seed, 0.0, 0.4),   // dirt
+                [60.0, 80.0, 120.0, 200.0][(next(seed) * 4.0).floor() as usize % 4], // schp
+                range(seed, -0.2, 0.2),  // balance
+            ],
+            mono: next(seed) < 0.5,
         }
     }
 
@@ -375,6 +429,14 @@ impl NiceEguiApp for MexEditor {
                     self.ab[self.ab_active] = applied;
                 }
             }
+            let dice_resp = ui.button(RichText::new("DICE").size(11.0).strong().color(th.accent));
+            let dice_clicked = dice_resp.clicked();
+            dice_resp.on_hover_text("Surprise me: musical random settings");
+            if dice_clicked {
+                let rolled = Self::dice_roll(&mut self.dice_seed);
+                rolled.apply(&setter, &self.params);
+                self.ab[self.ab_active] = rolled;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Listed B-first so that A ends up on the left.
                 for name in ["B", "A"] {
@@ -418,6 +480,7 @@ impl NiceEguiApp for MexEditor {
                 (&self.params.output, "OUTPUT", "Output trim before the limiter"),
                 (&self.params.ceil, "CEILING", "Limiter ceiling"),
                 (&self.params.tube, "TUBE", "Tube warmth: even harmonics"),
+                (&self.params.dirt, "DIRT", "Bit reduction crunch (lo-fi)"),
             ]
             .iter()
             .enumerate()
@@ -455,6 +518,28 @@ impl NiceEguiApp for MexEditor {
             mono_switch(ui, &self.params.monobass, &setter, th);
             ui.add_space(8.0);
             monitor_seg(ui, &self.params.monitor, &setter, th);
+        });
+        ui.separator();
+
+        // Row 3: extra utility.
+        ui.label(RichText::new("EXTRA").size(10.0).color(th.muted));
+        ui.add_space(1.0);
+        ui.horizontal(|ui| {
+            ui.add_space(2.0);
+            for (param, label, hint) in [
+                (
+                    &self.params.schp,
+                    "SC HP",
+                    "Glue sidechain high-pass: kicks stop pumping the mix",
+                ),
+                (
+                    &self.params.balance,
+                    "BALANCE",
+                    "Left/right output balance",
+                ),
+            ] {
+                knob_cell(ui, param, &setter, label, hint, th);
+            }
         });
         ui.separator();
 

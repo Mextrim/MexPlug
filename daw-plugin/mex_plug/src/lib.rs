@@ -63,6 +63,12 @@ struct MexPlugParams {
     pub tube: FloatParam,
     #[id = "haas"]
     pub haas: FloatParam,
+    #[id = "dirt"]
+    pub dirt: FloatParam,
+    #[id = "schp"]
+    pub schp: FloatParam,
+    #[id = "balance"]
+    pub balance: FloatParam,
     #[id = "theme"]
     pub theme: FloatParam,
 }
@@ -236,6 +242,31 @@ impl Default for MexPlugParams {
             )
             .with_smoother(SmoothingStyle::Linear(30.0))
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
+            dirt: FloatParam::new(
+                "Dirt",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+            schp: FloatParam::new(
+                "SC HP",
+                20.0,
+                FloatRange::Linear {
+                    min: 20.0,
+                    max: 500.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_unit(" Hz")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+            balance: FloatParam::new(
+                "Balance",
+                0.0,
+                FloatRange::Linear { min: -1.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
             // GUI-only theme switch: hidden from the host UI, persisted
             // with the project state, settable from our own editor.
             theme: FloatParam::new(
@@ -348,6 +379,9 @@ impl Plugin for MexPlug {
                 monitor: self.params.monitor.smoothed.next(),
                 tube: self.params.tube.smoothed.next(),
                 haas: self.params.haas.smoothed.next(),
+                dirt: self.params.dirt.smoothed.next(),
+                schp_fc: self.params.schp.smoothed.next(),
+                balance: self.params.balance.smoothed.next(),
             };
 
             // Copy through a local array: gives simultaneous L/R access for
