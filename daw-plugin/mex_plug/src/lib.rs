@@ -226,11 +226,12 @@ impl Plugin for MexPlug {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
-        MexEditor::make_editor(
-            self.editor_state.clone(),
-            self.repaint.clone(),
-            self.initial_editor.take().unwrap(),
-        )
+        // The host may open the editor any number of times: reuse the stored
+        // app on first open, build a fresh one (from current values) after.
+        let app = self.initial_editor.take().unwrap_or_else(|| {
+            MexEditor::new(self.params.clone(), self.peak_l.clone(), self.peak_r.clone())
+        });
+        MexEditor::make_editor(self.editor_state.clone(), self.repaint.clone(), app)
     }
 
     fn activate(

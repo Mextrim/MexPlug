@@ -232,11 +232,13 @@ impl NiceEguiApp for MexEditor {
                     .button(RichText::new(pr.name).size(11.0).color(INK))
                     .clicked()
                 {
-                    AbSlot {
+                    let applied = AbSlot {
                         v: pr.v,
                         mono: pr.mono,
-                    }
-                    .apply(&setter, &self.params);
+                    };
+                    applied.apply(&setter, &self.params);
+                    // Keep A/B consistent: the active slot becomes the preset.
+                    self.ab[self.ab_active] = applied;
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -268,6 +270,8 @@ impl NiceEguiApp for MexEditor {
         ui.separator();
 
         // Row 1: main character knobs.
+        ui.label(RichText::new("CHARACTER").size(10.0).color(MUTED));
+        ui.add_space(1.0);
         ui.horizontal(|ui| {
             ui.add_space(2.0);
             for (i, (param, label)) in [
@@ -292,6 +296,8 @@ impl NiceEguiApp for MexEditor {
         ui.separator();
 
         // Row 2: input + tone + glue + style, mono switch on the right.
+        ui.label(RichText::new("TONE · DYNAMICS").size(10.0).color(MUTED));
+        ui.add_space(1.0);
         ui.horizontal(|ui| {
             ui.add_space(2.0);
             for (param, label) in [
@@ -311,6 +317,11 @@ impl NiceEguiApp for MexEditor {
 
         // Footer hints.
         ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
+                    .size(10.0)
+                    .color(MUTED),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new("drag · double-click resets · shift = fine")
@@ -429,10 +440,10 @@ fn param_knob(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter, diame
     let ang = a0 + norm * 1.5 * PI;
     let hot = response.hovered() || response.dragged();
 
-    arc_line(&p, center, radius, a0, a1, Stroke::new(2.5, LINE));
+    arc_line(p, center, radius, a0, a1, Stroke::new(2.5, LINE));
     if norm > 0.002 {
         arc_line(
-            &p,
+            p,
             center,
             radius,
             a0,

@@ -285,8 +285,8 @@ impl Core {
         for (c, ch) in self.chan.iter_mut().enumerate() {
             let seed_off = c * 97;
             ch.comb = Vec::with_capacity(4);
-            for k in 0..4 {
-                let mut len = (sr as usize * (BASE_MS[k] + seed_off % 7)) / 1000;
+            for &ms in BASE_MS.iter() {
+                let mut len = (sr as usize * (ms + seed_off % 7)) / 1000;
                 if len < 16 {
                     len = 16;
                 }
@@ -363,11 +363,10 @@ impl Core {
         let style = (p.style.round() as i32).clamp(0, 2);
 
         // Stage 0: input trim, then Stage 1 per channel: DC-block + EQ.
-        for c in 0..n {
-            let ch = &mut self.chan[c];
+        for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
             ch.lows.c = lows_c;
             ch.highs.c = highs_c;
-            let mut x = s[c] as f64 * p.input_gain as f64;
+            let mut x = *dst as f64 * p.input_gain as f64;
             let y = x - ch.dc_x1 + DC_R * ch.dc_y1;
             ch.dc_x1 = x;
             ch.dc_y1 = y;
@@ -376,7 +375,7 @@ impl Core {
             x = ch.mud.run(x);
             x = ch.lows.run(x);
             x = ch.highs.run(x);
-            s[c] = x as f32;
+            *dst = x as f32;
         }
 
         // Stage 2: mono bass via LR4 crossover at ~120 Hz.
@@ -388,18 +387,17 @@ impl Core {
                 s[0] as f64
             };
             let m = self.mlp2.run(self.mlp1.run(mid_in));
-            for c in 0..n {
-                let ch = &mut self.chan[c];
-                let x = s[c] as f64;
+            for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
+                let x = *dst as f64;
                 let h = ch.mhp2.run(ch.mhp1.run(x));
-                s[c] = (h + m) as f32;
+                *dst = (h + m) as f32;
             }
         }
 
         // Stage 3 per channel: saturation with selectable character.
         // 0 = Clean (atan), 1 = Warm (tanh), 2 = Hard (hot tanh).
-        for c in 0..n {
-            let x = s[c] as f64;
+        for dst in s.iter_mut().take(n) {
+            let x = *dst as f64;
             let y = match style {
                 0 => {
                     let k = drive * 1.2;
@@ -411,7 +409,7 @@ impl Core {
                 }
                 _ => (x * drive).tanh() / sat_norm,
             };
-            s[c] = (y * 0.92) as f32;
+            *dst = (y * 0.92) as f32;
         }
 
         // Stage 4: M/S width (stereo only).
@@ -427,12 +425,11 @@ impl Core {
         let punch = p.punch.clamp(0.0, 1.0) as f64;
         if punch > 0.001 {
             let sc = self.sustain_c;
-            for c in 0..n {
-                let ch = &mut self.chan[c];
-                let x = s[c] as f64;
+            for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
+                let x = *dst as f64;
                 ch.sustain = sc * ch.sustain + (1.0 - sc) * x;
                 let tr = x - ch.sustain;
-                s[c] = (ch.sustain + tr * (1.0 + 2.0 * punch)) as f32;
+                *dst = (ch.sustain + tr * (1.0 + 2.0 * punch)) as f32;
             }
         }
 
@@ -445,10 +442,9 @@ impl Core {
             let depth = self.max_d as f64 * 0.55 * human;
             let dly = self.max_d as f64 * 0.5 + depth * 0.5 * lfo;
             let len = self.wow_len as f64;
-            for c in 0..n {
-                let ch = &mut self.chan[c];
+            for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
                 let buf = &mut ch.wow_buf;
-                buf[self.wow_pos] = s[c];
+                buf[self.wow_pos] = *dst;
                 let mut rpos = self.wow_pos as f64 - dly;
                 while rpos < 0.0 {
                     rpos += len;
@@ -456,13 +452,13 @@ impl Core {
                 let p0 = rpos.floor() as usize % self.wow_len;
                 let p1 = (p0 + 1) % self.wow_len;
                 let fr = (rpos - rpos.floor()) as f32;
-                s[c] = buf[p0] + (buf[p1] - buf[p0]) * fr;
+                *dst = buf[p0] + (buf[p1] - buf[p0]) * fr;
             }
             self.wow_pos = (self.wow_pos + 1) % self.wow_len;
         } else if self.wow_len > 0 {
             // Keep the delay line fed so toggling `human` does not click hard.
-            for c in 0..n {
-                self.chan[c].wow_buf[self.wow_pos] = s[c];
+            for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
+                ch.wow_buf[self.wow_pos] = *dst;
             }
             self.wow_pos = (self.wow_pos + 1) % self.wow_len;
         }
@@ -470,8 +466,8 @@ impl Core {
         // Stage 7: small room.
         let wet = p.room.clamp(0.0, 0.25) as f64;
         if wet > 0.001 {
-            for c in 0..n {
-                s[c] = self.room_run(c, s[c], wet);
+            for (c, dst) in s.iter_mut().take(n).enumerate() {
+                *dst = self.room_run(c, *dst, wet);
             }
         }
 
@@ -480,15 +476,17 @@ impl Core {
         if smooth > 0.001 {
             let lc = self.smooth_lp_c;
             let mut hs = [0.0f64; 2];
-            for c in 0..n {
-                let ch = &mut self.chan[c];
-                let x = s[c] as f64;
+            for (h, (dst, ch)) in hs
+                .iter_mut()
+                .zip(s.iter_mut().take(n).zip(self.chan.iter_mut()))
+            {
+                let x = *dst as f64;
                 ch.smooth_lp = lc * ch.smooth_lp + (1.0 - lc) * x;
-                hs[c] = x - ch.smooth_lp;
+                *h = x - ch.smooth_lp;
             }
             let mut det = 0.0f64;
-            for c in 0..n {
-                det = det.max(hs[c].abs());
+            for h in hs.iter().take(n) {
+                det = det.max(h.abs());
             }
             if det > self.smooth_env {
                 self.smooth_env =
@@ -503,27 +501,27 @@ impl Core {
                 1.0
             };
             let cut = (1.0 - gr) * smooth;
-            for c in 0..n {
-                s[c] = (s[c] as f64 - hs[c] * cut) as f32;
+            for (dst, h) in s.iter_mut().take(n).zip(hs.iter()) {
+                *dst = (*dst as f64 - h * cut) as f32;
             }
         }
 
-        // Stage 9: tape noise.
+        // Stage 9: tape noise (fresh RNG draw per channel, same as before).
         if human > 0.01 {
             let noise_amp = 10.0f64.powf(-70.0 / 20.0) * (0.4 + human);
-            for c in 0..n {
+            for (dst, c) in s.iter_mut().take(n).zip(0..) {
                 let w = self.next_u01() * 2.0 - 1.0;
                 let ch = &mut self.chan[c];
                 ch.noise_lp = 0.94 * ch.noise_lp + 0.06 * w;
-                s[c] += (ch.noise_lp * noise_amp * 2.0) as f32;
+                *dst += (ch.noise_lp * noise_amp * 2.0) as f32;
             }
         }
 
         // Stage 10: glue compressor, shared envelope (matches offline).
         {
             let mut det = 0.0f64;
-            for c in 0..n {
-                det = det.max(s[c].abs() as f64);
+            for v in s.iter().take(n) {
+                det = det.max(v.abs() as f64);
             }
             if det > self.glue_env {
                 self.glue_env = self.glue_atk * self.glue_env + (1.0 - self.glue_atk) * det;
@@ -537,8 +535,8 @@ impl Core {
             // Glue amount scales the reduction (1.0 = full glue as before).
             let gr_mix = 1.0 + (gr - 1.0) * p.glue.clamp(0.0, 1.0) as f64;
             let g = (gr_mix * GLUE_MAKEUP * p.out_gain as f64) as f32;
-            for c in 0..n {
-                s[c] *= g;
+            for dst in s.iter_mut().take(n) {
+                *dst *= g;
             }
         }
 
@@ -546,8 +544,8 @@ impl Core {
         {
             let ceil = 10.0f64.powf(p.ceil_db.clamp(-3.0, -0.1) as f64 / 20.0);
             let mut det = 0.0f64;
-            for c in 0..n {
-                det = det.max(s[c].abs() as f64);
+            for v in s.iter().take(n) {
+                det = det.max(v.abs() as f64);
             }
             if det > self.lim_env {
                 self.lim_env = det;
@@ -559,8 +557,8 @@ impl Core {
             } else {
                 1.0
             };
-            for c in 0..n {
-                s[c] = (s[c] as f64 * g) as f32;
+            for dst in s.iter_mut().take(n) {
+                *dst = (*dst as f64 * g) as f32;
             }
         }
     }
@@ -627,14 +625,14 @@ mod tests {
     ) -> Vec<Vec<f32>> {
         let mut core = Core::new();
         core.set_sample_rate(44100.0);
-        let mut out = vec![vec![0.0f32; frames]; n_ch];
+        let mut out: Vec<Vec<f32>> = (0..n_ch).map(|_| Vec::with_capacity(frames)).collect();
         for i in 0..frames {
             let t = i as f32 / 44100.0;
             let v = (2.0 * std::f32::consts::PI * freq * t).sin();
             let mut s = [v * amp_l, v * amp_r];
             core.process_frame(&mut s, n_ch, p);
-            for c in 0..n_ch {
-                out[c][i] = s[c];
+            for (dst, v) in out.iter_mut().zip(s.iter()) {
+                dst.push(*v);
             }
         }
         out
@@ -667,10 +665,10 @@ mod tests {
         let out = render(2, 44100, &p);
         // Processed sine must differ from a clean sine (EQ+sat+width change it).
         let mut diff = 0.0f32;
-        for i in 0..44100 {
+        for (i, &v) in out[0].iter().enumerate() {
             let t = i as f32 / 44100.0;
             let clean = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.5;
-            diff = diff.max((out[0][i] - clean).abs());
+            diff = diff.max((v - clean).abs());
         }
         assert!(diff > 1e-3, "effect seems bypassed, diff={diff}");
     }
