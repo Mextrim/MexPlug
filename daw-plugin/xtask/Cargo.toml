@@ -1,7 +1,0 @@
-[package]
-name = "xtask"
-version = "0.0.0"
-edition = "2021"
-
-[dependencies]
-nice-plug-xtask = "0.1"
