@@ -4,7 +4,8 @@
 //! Bass shelf @100 Hz, Air shelf @8.2 kHz) -> mono bass (LR4 @120 Hz)
 //! -> saturation (Clean/Warm/Hard) -> M/S width -> punch -> wow/flutter
 //! -> room -> smooth (de-harsh) -> tape noise -> glue 2:1 (amount)
-//! -> output trim -> limiter.
+//! -> output trim -> limiter -> parallel mix (delay-compensated dry)
+//! -> monitor (Stereo/Mid/Side).
 //!
 //! Differences vs the offline version (honest list):
 //! - Wow/flutter uses a bounded delay line instead of whole-buffer resampling.
@@ -38,6 +39,10 @@ pub struct LiveParams {
     pub glue: f32,
     /// Saturation character: 0 = Clean (atan), 1 = Warm (tanh), 2 = Hard.
     pub style: f32,
+    /// Dry/wet parallel mix 0..1 (1 = fully wet).
+    pub mix: f32,
+    /// Monitor: 0 = Stereo, 1 = Mid solo, 2 = Side solo.
+    pub monitor: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -173,6 +178,7 @@ struct Channel {
     highs: Biquad,
     mhp1: Biquad,
     mhp2: Biquad,
+    dry: Vec<f32>,
     sustain: f64,
     smooth_lp: f64,
     wow_buf: Vec<f32>,
@@ -188,6 +194,10 @@ pub struct Core {
     chan: [Channel; 2],
     mlp1: Biquad,
     mlp2: Biquad,
+    dry_pos: usize,
+    dry_len: usize,
+    dry_dly: usize,
+    last_gr: f32,
     sustain_c: f64,
     smooth_lp_c: f64,
     smooth_atk: f64,
@@ -219,6 +229,10 @@ impl Core {
             chan: [Channel::default(), Channel::default()],
             mlp1: Biquad::default(),
             mlp2: Biquad::default(),
+            dry_pos: 0,
+            dry_len: 0,
+            dry_dly: 0,
+            last_gr: 1.0,
             sustain_c: 0.0,
             smooth_lp_c: 0.0,
             smooth_atk: 0.0,
@@ -276,8 +290,13 @@ impl Core {
             self.max_d = 8;
         }
         self.wow_len = self.max_d + 4;
+        // Dry line for the parallel mix: fixed delay at the wow center,
+        // so dry/wet stay aligned on average (wow wobbles around it).
+        self.dry_len = self.max_d + 2;
+        self.dry_dly = self.max_d / 2;
         for ch in self.chan.iter_mut() {
             ch.wow_buf = vec![0.0f32; self.wow_len];
+            ch.dry = vec![0.0f32; self.dry_len];
         }
 
         // Small room: same comb/allpass lengths as offline.
@@ -317,6 +336,9 @@ impl Core {
             for b in ch.wow_buf.iter_mut() {
                 *b = 0.0;
             }
+            for b in ch.dry.iter_mut() {
+                *b = 0.0;
+            }
             for b in ch.comb.iter_mut() {
                 for s in b.iter_mut() {
                     *s = 0.0;
@@ -330,6 +352,8 @@ impl Core {
             ch.noise_lp = 0.0;
         }
         self.smooth_env = 0.0;
+        self.last_gr = 1.0;
+        self.dry_pos = 0;
         self.mlp1.clear();
         self.mlp2.clear();
         self.wow_pos = 0;
@@ -337,6 +361,12 @@ impl Core {
         self.wow_p2 = 0.0;
         self.glue_env = 0.0;
         self.lim_env = 0.0;
+    }
+
+    /// Last glue gain reduction as a linear factor (1.0 = no reduction).
+    /// Updated every frame; the GUI reads it for the GR meter.
+    pub fn last_gr(&self) -> f32 {
+        self.last_gr
     }
 
     fn next_u01(&mut self) -> f64 {
@@ -362,11 +392,15 @@ impl Core {
         let highs_c = highshelf(self.sr, 8200.0, 0.8, p.air_db.clamp(0.0, 3.0) as f64);
         let style = (p.style.round() as i32).clamp(0, 2);
 
-        // Stage 0: input trim, then Stage 1 per channel: DC-block + EQ.
+        // Stage 0: input trim (tapped to the dry line), then Stage 1: DC-block + EQ.
+        let dpos = self.dry_pos;
         for (dst, ch) in s.iter_mut().take(n).zip(self.chan.iter_mut()) {
             ch.lows.c = lows_c;
             ch.highs.c = highs_c;
             let mut x = *dst as f64 * p.input_gain as f64;
+            if dpos < ch.dry.len() {
+                ch.dry[dpos] = x as f32;
+            }
             let y = x - ch.dc_x1 + DC_R * ch.dc_y1;
             ch.dc_x1 = x;
             ch.dc_y1 = y;
@@ -534,6 +568,7 @@ impl Core {
             }
             // Glue amount scales the reduction (1.0 = full glue as before).
             let gr_mix = 1.0 + (gr - 1.0) * p.glue.clamp(0.0, 1.0) as f64;
+            self.last_gr = gr_mix as f32;
             let g = (gr_mix * GLUE_MAKEUP * p.out_gain as f64) as f32;
             for dst in s.iter_mut().take(n) {
                 *dst *= g;
@@ -560,6 +595,38 @@ impl Core {
             for dst in s.iter_mut().take(n) {
                 *dst = (*dst as f64 * g) as f32;
             }
+        }
+
+        // Stage 12: parallel mix with delay-compensated dry, then monitor.
+        // The dry tap rides a fixed delay at the wow center, so dry/wet stay
+        // aligned on average (wow wobbles a little around it in the blend).
+        // At mix = 1.0 the output is bit-identical to the old chain.
+        if self.dry_len > 0 {
+            let mixf = p.mix.clamp(0.0, 1.0) as f64;
+            let dryf = 1.0 - mixf;
+            let mon = (p.monitor.round() as i32).clamp(0, 2);
+            let rpos = (self.dry_pos + self.dry_len - self.dry_dly % self.dry_len) % self.dry_len;
+            if n == 2 {
+                let dry = [self.chan[0].dry[rpos], self.chan[1].dry[rpos]];
+                for (dst, d) in s.iter_mut().take(n).zip(dry.iter()) {
+                    let m = *d as f64 * dryf + *dst as f64 * mixf;
+                    *dst = m.clamp(-1.0, 1.0) as f32;
+                }
+                if mon == 1 {
+                    let mid = (s[0] as f64 + s[1] as f64) * 0.5;
+                    s[0] = mid as f32;
+                    s[1] = mid as f32;
+                } else if mon == 2 {
+                    let side = (s[0] as f64 - s[1] as f64) * 0.5;
+                    s[0] = side as f32;
+                    s[1] = (-side) as f32;
+                }
+            } else {
+                let d = self.chan[0].dry[rpos];
+                let m = d as f64 * dryf + s[0] as f64 * mixf;
+                s[0] = m.clamp(-1.0, 1.0) as f32;
+            }
+            self.dry_pos = (self.dry_pos + 1) % self.dry_len;
         }
     }
 
@@ -608,6 +675,8 @@ mod tests {
             air_db: 1.6,
             glue: 1.0,
             style: 1.0,
+            mix: 1.0,
+            monitor: 0.0,
         }
     }
 
@@ -938,10 +1007,91 @@ mod tests {
         let a = render_freq(2, 44100, &clean, 440.0, 0.5, 0.5);
         let b = render_freq(2, 44100, &hard, 440.0, 0.5, 0.5);
         let mut diff = 0.0f32;
-        for i in 0..44100 {
-            diff = diff.max((a[0][i] - b[0][i]).abs());
-            assert!(a[0][i].is_finite() && b[0][i].is_finite());
+        for (x, y) in a[0].iter().zip(b[0].iter()) {
+            assert!(x.is_finite() && y.is_finite());
+            diff = diff.max((x - y).abs());
         }
         assert!(diff > 1e-3, "sat styles identical, diff={diff}");
+    }
+
+    #[test]
+    fn mix_dry_passthrough() {
+        // Mix at 0 must return (delayed) dry input, nearly untouched.
+        let mut p = isolated();
+        p.mix = 0.0;
+        let out = render_freq(2, 44100, &p, 440.0, 0.5, 0.4);
+        let pk = peak(&out);
+        assert!(
+            (0.9..1.1).contains(&(pk / 0.5)),
+            "dry passthrough off, peak={pk}"
+        );
+        // And it must differ from the fully wet render.
+        let mut wet = isolated();
+        wet.mix = 1.0;
+        let out_wet = render_freq(2, 44100, &wet, 440.0, 0.5, 0.4);
+        let mut diff = 0.0f32;
+        for (x, y) in out[0].iter().zip(out_wet[0].iter()).skip(22050) {
+            diff = diff.max((x - y).abs());
+        }
+        assert!(diff > 1e-3, "mix knob does nothing, diff={diff}");
+    }
+
+    #[test]
+    fn monitor_mid_side() {
+        // L-only input: Mid solo -> identical channels, Side solo -> opposite.
+        let run = |mon: f32| {
+            let mut p = isolated();
+            p.monitor = mon;
+            let mut core = Core::new();
+            core.set_sample_rate(44100.0);
+            let (mut max_diff, mut max_sum, mut pk) = (0.0f32, 0.0f32, 0.0f32);
+            for i in 0..44100 {
+                let t = i as f32 / 44100.0;
+                let v = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.5;
+                let mut s = [v, 0.0];
+                core.process_frame(&mut s, 2, &p);
+                if i > 22050 {
+                    max_diff = max_diff.max((s[0] - s[1]).abs());
+                    max_sum = max_sum.max((s[0] + s[1]).abs());
+                    pk = pk.max(s[0].abs()).max(s[1].abs());
+                }
+            }
+            (max_diff, max_sum, pk)
+        };
+        let (d_mid, _, pk_mid) = run(1.0);
+        assert!(pk_mid > 0.05, "mid solo lost signal");
+        assert!(d_mid < 1e-6, "mid solo channels differ, {d_mid}");
+        let (_, s_side, pk_side) = run(2.0);
+        assert!(pk_side > 0.05, "side solo lost signal");
+        assert!(s_side < 1e-6, "side solo not opposite, {s_side}");
+        let (d_st, _, _) = run(0.0);
+        assert!(d_st > 1e-3, "stereo collapsed unexpectedly");
+    }
+
+    #[test]
+    fn last_gr_tracks_compression() {
+        // Loud input with glue on: reduction reported; silence: unity.
+        let mut p = isolated();
+        p.glue = 1.0;
+        let mut core = Core::new();
+        core.set_sample_rate(44100.0);
+        for i in 0..44100 {
+            let t = i as f32 / 44100.0;
+            let v = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.8;
+            let mut s = [v, v];
+            core.process_frame(&mut s, 2, &p);
+        }
+        let gr = core.last_gr();
+        assert!(gr < 0.9, "GR meter stuck at unity, {gr}");
+        let mut core2 = Core::new();
+        core2.set_sample_rate(44100.0);
+        for _ in 0..4410 {
+            let mut s = [0.0f32, 0.0];
+            core2.process_frame(&mut s, 2, &p);
+        }
+        assert!(
+            (core2.last_gr() - 1.0).abs() < 1e-6,
+            "GR meter not unity in silence"
+        );
     }
 }

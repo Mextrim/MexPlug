@@ -19,6 +19,7 @@ pub struct MexPlug {
     editor_state: Arc<EguiEditorState>,
     peak_l: Arc<AtomicF32>,
     peak_r: Arc<AtomicF32>,
+    gr_db: Arc<AtomicF32>,
     peak_decay: f32,
     repaint: RepaintNotifier,
     initial_editor: Option<MexEditor>,
@@ -54,6 +55,10 @@ struct MexPlugParams {
     pub glue: FloatParam,
     #[id = "style"]
     pub style: FloatParam,
+    #[id = "mix"]
+    pub mix: FloatParam,
+    #[id = "monitor"]
+    pub monitor: FloatParam,
 }
 
 impl Default for MexPlug {
@@ -61,13 +66,16 @@ impl Default for MexPlug {
         let params = Arc::new(MexPlugParams::default());
         let peak_l = Arc::new(AtomicF32::new(0.0));
         let peak_r = Arc::new(AtomicF32::new(0.0));
-        let initial_editor = MexEditor::new(params.clone(), peak_l.clone(), peak_r.clone());
+        let gr_db = Arc::new(AtomicF32::new(0.0));
+        let initial_editor =
+            MexEditor::new(params.clone(), peak_l.clone(), peak_r.clone(), gr_db.clone());
         Self {
             params,
             core: Core::new(),
             editor_state: EguiEditorState::from_size(EDITOR_SIZE, 1.0),
             peak_l,
             peak_r,
+            gr_db,
             peak_decay: 1.0,
             repaint: RepaintNotifier::new(),
             initial_editor: Some(initial_editor),
@@ -189,6 +197,25 @@ impl Default for MexPlugParams {
                 2 => String::from("Hard"),
                 _ => String::from("Warm"),
             })),
+            mix: FloatParam::new(
+                "Mix",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_value_to_string(Arc::new(|v: f32| format!("{:.0} %", v * 100.0))),
+            monitor: FloatParam::new(
+                "Monitor",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_step_size(1.0)
+            .with_value_to_string(Arc::new(|v: f32| match v.round() as i32 {
+                1 => String::from("Mid"),
+                2 => String::from("Side"),
+                _ => String::from("Stereo"),
+            })),
         }
     }
 }
@@ -229,7 +256,12 @@ impl Plugin for MexPlug {
         // The host may open the editor any number of times: reuse the stored
         // app on first open, build a fresh one (from current values) after.
         let app = self.initial_editor.take().unwrap_or_else(|| {
-            MexEditor::new(self.params.clone(), self.peak_l.clone(), self.peak_r.clone())
+            MexEditor::new(
+                self.params.clone(),
+                self.peak_l.clone(),
+                self.peak_r.clone(),
+                self.gr_db.clone(),
+            )
         });
         MexEditor::make_editor(self.editor_state.clone(), self.repaint.clone(), app)
     }
@@ -276,6 +308,8 @@ impl Plugin for MexPlug {
                 air_db: self.params.air.smoothed.next(),
                 glue: self.params.glue.smoothed.next(),
                 style: self.params.style.smoothed.next(),
+                mix: self.params.mix.smoothed.next(),
+                monitor: self.params.monitor.smoothed.next(),
             };
 
             // Copy through a local array: gives simultaneous L/R access for
@@ -310,7 +344,7 @@ impl Plugin for MexPlug {
             }
         }
 
-        // Stereo output meter for the editor (lock-free, only when open).
+        // Meters for the editor (lock-free, only when open).
         if self.editor_state.is_open() {
             let decay = self.peak_decay.powf(buffer.samples() as f32);
             let mut repaint = false;
@@ -324,6 +358,13 @@ impl Plugin for MexPlug {
                     atom.store(new, Ordering::Relaxed);
                     repaint = true;
                 }
+            }
+            // Glue reduction in dB (<= 0).
+            let gr_db = 20.0 * self.core.last_gr().max(1e-6).log10();
+            let old_gr = self.gr_db.load(Ordering::Relaxed);
+            if (gr_db - old_gr).abs() > 0.05 {
+                self.gr_db.store(gr_db, Ordering::Relaxed);
+                repaint = true;
             }
             if repaint {
                 self.repaint.request_repaint();

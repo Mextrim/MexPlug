@@ -1,4 +1,4 @@
-# MexPlug — VST3/CLAP плагин (v0.5.2)
+# MexPlug — VST3/CLAP плагин (v0.6.0)
 
 ## Установка за 1 минуту (без сборки, для FL Studio)
 
@@ -49,6 +49,8 @@ cargo xtask bundle mex_plug --release
 | Air | 0…+3 dB | 1.6 | верхняя полка @8.2 кГц |
 | Glue | 0.0–1.0 | 1.0 | количество glue-компрессии |
 | Style | Clean/Warm/Hard | Warm | характер сатурации |
+| Mix | 0–100 % | 100 % | параллельный dry/wet (сухая ветка с компенсацией задержки) |
+| Monitor | Stereo/Mid/Side | Stereo | соло Mid/Side для проверки моно |
 
 Цепь: input → DC-block → HP 28 Гц → −1.2 дБ @320 → Bass → Air → mono bass
 (LR4 @120) → sat → M/S → punch → wow/flutter → room → smooth → шум →
@@ -63,7 +65,11 @@ glue 2:1 → output → лимитер. Все ручки сглажены (30 �
 - **Club Punch** — жир, атака, бас +2.
 - **Lo-Fi Warmth** — тёплая плёнка, максимум human.
 - **Airy Clean** — воздух без грязи (Clean-сатурация).
+- **Streaming Loud** — громко под стриминг.
+- **Vinyl Dust** — тёплая пыль винила.
 - **A/B** — сравнить два варианта настроек одним кликом.
+
+Наведи мышь на любую ручку — всплывёт подсказка, что она делает.
 | Output | −12…+12 dB | 0 | трим перед лимитером |
 | Ceiling | −3…−0.1 dB | −1.0 | потолок лимитера |
 

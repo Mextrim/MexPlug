@@ -15,7 +15,7 @@ use std::sync::{Arc, atomic::Ordering};
 
 use super::MexPlugParams;
 
-pub const EDITOR_SIZE: LogicalSize<f32> = LogicalSize::new(760.0, 500.0);
+pub const EDITOR_SIZE: LogicalSize<f32> = LogicalSize::new(920.0, 510.0);
 
 // Palette: Flat UI — wet asphalt slate, clouds text, turquoise accent.
 // (Const names kept stable; only values define the theme.)
@@ -28,10 +28,10 @@ const ACCENT_HOT: Color32 = Color32::from_rgb(72, 201, 176);
 const BAD: Color32 = Color32::from_rgb(231, 76, 60);
 
 /// Plain-value snapshot of all automatable params (A/B slots + presets).
-/// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style.
+/// Order: drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor.
 #[derive(Clone, Copy)]
 struct AbSlot {
-    v: [f32; 13],
+    v: [f32; 15],
     mono: bool,
 }
 
@@ -52,6 +52,8 @@ impl AbSlot {
                 p.air.value(),
                 p.glue.value(),
                 p.style.value(),
+                p.mix.value(),
+                p.monitor.value(),
             ],
             mono: p.monobass.value(),
         }
@@ -72,6 +74,8 @@ impl AbSlot {
             &p.air,
             &p.glue,
             &p.style,
+            &p.mix,
+            &p.monitor,
         ];
         for (param, &val) in ps.iter().zip(self.v.iter()) {
             setter.begin_set_parameter(*param);
@@ -86,36 +90,46 @@ impl AbSlot {
 
 struct Preset {
     name: &'static str,
-    v: [f32; 13],
+    v: [f32; 15],
     mono: bool,
 }
 
-// drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style
-// style: 0 = Clean, 1 = Warm, 2 = Hard.
-const PRESETS: [Preset; 5] = [
+// drive,width,room,human,punch,smooth,output,ceil,input,bass,air,glue,style,mix,monitor
+// style: 0 = Clean, 1 = Warm, 2 = Hard. monitor: 0 = Stereo, 1 = Mid, 2 = Side.
+const PRESETS: [Preset; 7] = [
     Preset {
         name: "Gentle Polish",
-        v: [1.5, 1.12, 0.05, 0.4, 0.2, 0.3, 0.0, -1.0, 0.0, 0.0, 1.2, 0.6, 1.0],
+        v: [1.5, 1.12, 0.05, 0.4, 0.2, 0.3, 0.0, -1.0, 0.0, 0.0, 1.2, 0.6, 1.0, 1.0, 0.0],
         mono: true,
     },
     Preset {
         name: "AI Rescue",
-        v: [2.4, 1.22, 0.08, 0.85, 0.35, 0.6, 0.0, -1.0, -1.0, -0.5, 1.0, 0.8, 1.0],
+        v: [2.4, 1.22, 0.08, 0.85, 0.35, 0.6, 0.0, -1.0, -1.0, -0.5, 1.0, 0.8, 1.0, 1.0, 0.0],
         mono: true,
     },
     Preset {
         name: "Club Punch",
-        v: [2.8, 1.15, 0.04, 0.3, 0.7, 0.2, 1.0, -0.5, 0.0, 2.0, 1.8, 1.0, 2.0],
+        v: [2.8, 1.15, 0.04, 0.3, 0.7, 0.2, 1.0, -0.5, 0.0, 2.0, 1.8, 1.0, 2.0, 1.0, 0.0],
         mono: true,
     },
     Preset {
         name: "Lo-Fi Warmth",
-        v: [3.2, 1.05, 0.12, 1.0, 0.15, 0.4, 0.0, -1.5, -2.0, 1.0, 0.5, 0.7, 1.0],
+        v: [3.2, 1.05, 0.12, 1.0, 0.15, 0.4, 0.0, -1.5, -2.0, 1.0, 0.5, 0.7, 1.0, 0.85, 0.0],
         mono: true,
     },
     Preset {
         name: "Airy Clean",
-        v: [1.3, 1.28, 0.06, 0.35, 0.25, 0.35, 0.0, -1.0, 0.0, -1.0, 2.5, 0.5, 0.0],
+        v: [1.3, 1.28, 0.06, 0.35, 0.25, 0.35, 0.0, -1.0, 0.0, -1.0, 2.5, 0.5, 0.0, 1.0, 0.0],
+        mono: true,
+    },
+    Preset {
+        name: "Streaming Loud",
+        v: [2.2, 1.15, 0.05, 0.4, 0.5, 0.3, 2.0, -1.0, 0.0, 1.0, 1.5, 1.0, 1.0, 1.0, 0.0],
+        mono: true,
+    },
+    Preset {
+        name: "Vinyl Dust",
+        v: [3.0, 1.08, 0.14, 1.0, 0.2, 0.5, 0.0, -1.5, -1.0, 0.5, 0.8, 0.7, 1.0, 0.9, 0.0],
         mono: true,
     },
 ];
@@ -125,6 +139,7 @@ pub struct MexEditor {
     params: Arc<MexPlugParams>,
     peak_l: Arc<AtomicF32>,
     peak_r: Arc<AtomicF32>,
+    gr_db: Arc<AtomicF32>,
     clip: bool,
     ab: [AbSlot; 2],
     ab_active: usize,
@@ -141,12 +156,14 @@ impl MexEditor {
         params: Arc<MexPlugParams>,
         peak_l: Arc<AtomicF32>,
         peak_r: Arc<AtomicF32>,
+        gr_db: Arc<AtomicF32>,
     ) -> Self {
         let slot = AbSlot::capture(&params);
         Self {
             params,
             peak_l,
             peak_r,
+            gr_db,
             clip: false,
             ab: [slot, slot],
             ab_active: 0,
@@ -231,7 +248,13 @@ impl NiceEguiApp for MexEditor {
                 ui.label(RichText::new("auto-mix · analog liveliness").size(11.0).color(MUTED));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                meter_block(ui, &self.peak_l, &self.peak_r, &mut self.clip);
+                meter_block(
+                    ui,
+                    &self.peak_l,
+                    &self.peak_r,
+                    &self.gr_db,
+                    &mut self.clip,
+                );
             });
         });
         ui.add_space(2.0);
@@ -287,15 +310,15 @@ impl NiceEguiApp for MexEditor {
         ui.add_space(1.0);
         ui.horizontal(|ui| {
             ui.add_space(2.0);
-            for (i, (param, label)) in [
-                (&self.params.drive, "DRIVE"),
-                (&self.params.width, "WIDTH"),
-                (&self.params.room, "ROOM"),
-                (&self.params.human, "HUMAN"),
-                (&self.params.punch, "PUNCH"),
-                (&self.params.smooth, "SMOOTH"),
-                (&self.params.output, "OUTPUT"),
-                (&self.params.ceil, "CEILING"),
+            for (i, (param, label, hint)) in [
+                (&self.params.drive, "DRIVE", "Tape-style saturation drive"),
+                (&self.params.width, "WIDTH", "Stereo width (Mid/Side)"),
+                (&self.params.room, "ROOM", "Small room ambience"),
+                (&self.params.human, "HUMAN", "Wow, flutter and tape noise"),
+                (&self.params.punch, "PUNCH", "Transient attack emphasis"),
+                (&self.params.smooth, "SMOOTH", "Tames harsh highs dynamically"),
+                (&self.params.output, "OUTPUT", "Output trim before the limiter"),
+                (&self.params.ceil, "CEILING", "Limiter ceiling"),
             ]
             .iter()
             .enumerate()
@@ -303,7 +326,7 @@ impl NiceEguiApp for MexEditor {
                 if i == 4 {
                     ui.separator();
                 }
-                knob_cell(ui, param, &setter, label);
+                knob_cell(ui, param, &setter, label, hint);
             }
         });
         ui.separator();
@@ -313,18 +336,25 @@ impl NiceEguiApp for MexEditor {
         ui.add_space(1.0);
         ui.horizontal(|ui| {
             ui.add_space(2.0);
-            for (param, label) in [
-                (&self.params.input, "INPUT"),
-                (&self.params.bass, "BASS"),
-                (&self.params.air, "AIR"),
-                (&self.params.glue, "GLUE"),
-                (&self.params.style, "STYLE"),
+            for (param, label, hint) in [
+                (&self.params.input, "INPUT", "Input trim into the chain"),
+                (&self.params.bass, "BASS", "Low shelf at 100 Hz"),
+                (&self.params.air, "AIR", "High shelf at 8.2 kHz"),
+                (&self.params.glue, "GLUE", "Glue compression amount"),
+                (
+                    &self.params.style,
+                    "STYLE",
+                    "Saturation character: Clean / Warm / Hard",
+                ),
+                (&self.params.mix, "MIX", "Dry/wet parallel mix"),
             ] {
-                knob_cell(ui, param, &setter, label);
+                knob_cell(ui, param, &setter, label, hint);
             }
             ui.separator();
             ui.add_space(4.0);
             mono_switch(ui, &self.params.monobass, &setter);
+            ui.add_space(8.0);
+            monitor_seg(ui, &self.params.monitor, &setter);
         });
         ui.separator();
 
@@ -349,11 +379,12 @@ impl NiceEguiApp for MexEditor {
     }
 }
 
-/// Stereo output meter with clip latch LED (click to clear).
+/// Stereo output meter + glue reduction meter, clip latch LED (click to clear).
 fn meter_block(
     ui: &mut egui::Ui,
     peak_l: &Arc<AtomicF32>,
     peak_r: &Arc<AtomicF32>,
+    gr_db: &Arc<AtomicF32>,
     clip: &mut bool,
 ) {
     let l = peak_l.load(Ordering::Relaxed);
@@ -374,6 +405,8 @@ fn meter_block(
         meter_bar(ui, "L", ldb, 140.0);
         ui.add_space(3.0);
         meter_bar(ui, "R", rdb, 140.0);
+        ui.add_space(3.0);
+        gr_bar(ui, gr_db.load(Ordering::Relaxed));
         ui.add_space(3.0);
         ui.horizontal(|ui| {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(11.0, 11.0), Sense::click());
@@ -396,15 +429,41 @@ fn meter_block(
     });
 }
 
+/// Glue reduction bar, 0..-12 dB.
+fn gr_bar(ui: &mut egui::Ui, db: f32) {
+    let norm = ((-db) / 12.0).clamp(0.0, 1.0);
+    let txt = format!("{db:.1} dB");
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("GR").size(10.0).color(MUTED));
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(140.0, 6.0), Sense::hover());
+        let p = ui.painter();
+        p.rect_filled(rect, 2.0, LINE);
+        if norm > 0.002 {
+            let mut fill = rect;
+            fill.set_right(rect.left() + rect.width() * norm);
+            p.rect_filled(fill, 1.5, ACCENT);
+        }
+        ui.label(RichText::new(txt).size(10.0).color(MUTED));
+    })
+    .response
+    .on_hover_text("Glue compression depth");
+}
+
 /// One knob cell: name + slim knob + live value.
-fn knob_cell(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter, label: &str) {
+fn knob_cell(
+    ui: &mut egui::Ui,
+    param: &FloatParam,
+    setter: &ParamSetter,
+    label: &str,
+    hint: &'static str,
+) {
     ui.allocate_ui_with_layout(
         Vec2::new(80.0, 158.0),
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
             ui.label(RichText::new(label).size(10.0).color(MUTED));
             ui.add_space(1.0);
-            param_knob(ui, param, setter, 62.0);
+            param_knob(ui, param, setter, 62.0, hint);
             ui.add_space(1.0);
             let shown = param.modulated_normalized_value();
             ui.label(
@@ -417,7 +476,13 @@ fn knob_cell(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter, label:
 }
 
 /// Slim rotary knob bound to a FloatParam (normalized mapping).
-fn param_knob(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter, diameter: f32) {
+fn param_knob(
+    ui: &mut egui::Ui,
+    param: &FloatParam,
+    setter: &ParamSetter,
+    diameter: f32,
+    hint: &'static str,
+) {
     let mut norm = param.modulated_normalized_value();
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click_and_drag());
 
@@ -470,6 +535,7 @@ fn param_knob(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter, diame
         Stroke::new(2.0, INK),
     );
     p.circle_filled(center, 2.5, if hot { ACCENT_HOT } else { ACCENT });
+    response.on_hover_text(hint);
 }
 
 /// Arc polyline (egui 0.36 has no Painter::arc).
@@ -514,6 +580,7 @@ fn mono_switch(ui: &mut egui::Ui, param: &BoolParam, setter: &ParamSetter) {
             setter.set_parameter(param, !on);
             setter.end_set_parameter(param);
         }
+        response.on_hover_text("Fold bass below 120 Hz to mono");
         let p = ui.painter();
         p.rect_filled(rect, 10.0, LINE);
         let cx = if on { rect.right() - 11.0 } else { rect.left() + 11.0 };
@@ -525,6 +592,31 @@ fn mono_switch(ui: &mut egui::Ui, param: &BoolParam, setter: &ParamSetter) {
         ui.vertical(|ui| {
             ui.label(RichText::new("MONO BASS").size(11.0).color(INK));
             ui.label(RichText::new("lows below 120 Hz").size(10.0).color(MUTED));
+        });
+    });
+}
+
+/// Segmented Stereo / Mid / Side monitor switch.
+fn monitor_seg(ui: &mut egui::Ui, param: &FloatParam, setter: &ParamSetter) {
+    ui.vertical(|ui| {
+        ui.label(RichText::new("MONITOR").size(11.0).color(INK));
+        ui.horizontal(|ui| {
+            for (label, val) in [("ST", 0.0f32), ("M", 1.0), ("S", 2.0)] {
+                let active = (param.value() - val).abs() < 0.5;
+                let resp = ui.button(
+                    RichText::new(label)
+                        .size(11.0)
+                        .strong()
+                        .color(if active { ACCENT } else { MUTED }),
+                );
+                let clicked = resp.clicked();
+                resp.on_hover_text("Solo Mid / Side to check mono compatibility");
+                if clicked {
+                    setter.begin_set_parameter(param);
+                    setter.set_parameter(param, val);
+                    setter.end_set_parameter(param);
+                }
+            }
         });
     });
 }
