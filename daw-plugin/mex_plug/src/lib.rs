@@ -1,16 +1,27 @@
 //! MexPlug — punchy auto-mix + analog liveliness as VST3/CLAP.
-//! Generic UI (provided by the host). No custom editor in v0.2.
+//! Custom egui editor (dark console UI). Falls back to nothing (no generic UI)
+//! only if the editor backend is unavailable — hosts always get the custom GUI.
 
 mod core;
+mod editor;
 
+use atomic_float::AtomicF32;
 use core::{Core, LiveParams};
+use editor::{EDITOR_SIZE, MexEditor};
 use nice_plug::prelude::*;
+use nice_plug_egui::{EguiEditor, EguiEditorState, RepaintNotifier};
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 pub struct MexPlug {
     params: Arc<MexPlugParams>,
     core: Core,
+    editor_state: Arc<EguiEditorState>,
+    peak_l: Arc<AtomicF32>,
+    peak_r: Arc<AtomicF32>,
+    peak_decay: f32,
+    repaint: RepaintNotifier,
+    initial_editor: Option<MexEditor>,
 }
 
 #[derive(Params)]
@@ -37,9 +48,19 @@ struct MexPlugParams {
 
 impl Default for MexPlug {
     fn default() -> Self {
+        let params = Arc::new(MexPlugParams::default());
+        let peak_l = Arc::new(AtomicF32::new(0.0));
+        let peak_r = Arc::new(AtomicF32::new(0.0));
+        let initial_editor = MexEditor::new(params.clone(), peak_l.clone(), peak_r.clone());
         Self {
-            params: Arc::new(MexPlugParams::default()),
+            params,
             core: Core::new(),
+            editor_state: EguiEditorState::from_size(EDITOR_SIZE, 1.0),
+            peak_l,
+            peak_r,
+            peak_decay: 1.0,
+            repaint: RepaintNotifier::new(),
+            initial_editor: Some(initial_editor),
         }
     }
 }
@@ -140,12 +161,20 @@ impl Plugin for MexPlug {
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
-    type Editor = ();
+    type Editor = EguiEditor<MexEditor>;
     type SysExMessage = ();
     type BackgroundTask = ();
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
+        MexEditor::make_editor(
+            self.editor_state.clone(),
+            self.repaint.clone(),
+            self.initial_editor.take().unwrap(),
+        )
     }
 
     fn activate(
@@ -156,6 +185,10 @@ impl Plugin for MexPlug {
     ) -> bool {
         // Allocation happens here (not on the audio thread).
         self.core.set_sample_rate(buffer_config.sample_rate);
+        // Peak meter: -12 dB decay over PEAK_METER_DECAY_MS of silence.
+        self.peak_decay = 0.25f64
+            .powf((buffer_config.sample_rate as f64 * 150.0 / 1000.0).recip())
+            as f32;
         true
     }
 
@@ -169,6 +202,7 @@ impl Plugin for MexPlug {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        let mut block_peak = [0.0f32; 2];
         for mut frame in buffer.iter_samples() {
             let p = LiveParams {
                 drive: self.params.drive.smoothed.next(),
@@ -205,6 +239,32 @@ impl Plugin for MexPlug {
                     *sample = s[i];
                     i += 1;
                 }
+            }
+            if n > 0 {
+                block_peak[0] = block_peak[0].max(s[0].abs());
+            }
+            if n > 1 {
+                block_peak[1] = block_peak[1].max(s[1].abs());
+            }
+        }
+
+        // Stereo output meter for the editor (lock-free, only when open).
+        if self.editor_state.is_open() {
+            let decay = self.peak_decay.powf(buffer.samples() as f32);
+            let mut repaint = false;
+            for (atom, bp) in [(&self.peak_l, block_peak[0]), (&self.peak_r, block_peak[1])] {
+                let old = atom.load(Ordering::Relaxed);
+                let mut new = bp.max(old * decay);
+                if new <= util::MINUS_INFINITY_GAIN {
+                    new = 0.0;
+                }
+                if new != old {
+                    atom.store(new, Ordering::Relaxed);
+                    repaint = true;
+                }
+            }
+            if repaint {
+                self.repaint.request_repaint();
             }
         }
 

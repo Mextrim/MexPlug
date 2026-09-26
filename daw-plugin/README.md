@@ -1,4 +1,4 @@
-# MexPlug — VST3/CLAP плагин (v0.2.0)
+# MexPlug — VST3/CLAP плагин (v0.3.0)
 
 Панчевое авто-сведение + аналоговая живость. Реалтайм-версия офлайн-обрабатывалки
 (`Program.cs` в корне проекта). Фреймворк: [nice-plug](https://codeberg.org/RustAudio/nice-plug) 0.4.
@@ -36,10 +36,16 @@
 | Output | −12…+12 dB | 0 | трим перед лимитером |
 | Ceiling | −3…−0.1 dB | −1.0 | потолок лимитера |
 
-Цепь: DC-block → HP 28 Гц → −1.2 дБ @320 → +1.6 дБ @8.2к → tanh →
-mono bass → M/S → punch → wow/flutter → room → smooth → шум →
+Цепь: DC-block → HP 28 Гц → −1.2 дБ @320 → +1.6 дБ @8.2к → mono bass (LR4 @120) →
+tanh → M/S → punch → wow/flutter → room → smooth → шум →
 glue 2:1 → лимитер. Все ручки сглажены (30 мс), автоматизация пишется хостом.
-Интерфейс — generic UI хоста (свой GUI позже).
+
+## Интерфейс
+
+Свой тёмный GUI (egui): 8 кастомных ручек (drag — крутить, double-click — сброс,
+shift — точно), тумблер Mono Bass, стерео-метр выхода с залипающим
+индикатором клипа (клик — сбросить). Параметры также доступны через
+автоматизацию DAW как обычно.
 
 ID старых параметров (`drive/width/room/human/output`) не менялись.
 
@@ -48,7 +54,7 @@ ID старых параметров (`drive/width/room/human/output`) не ме
 - `cargo test -p mex_plug`: 7 тестов (finite+потолок лимитера mono/stereo,
   эффект меняет сигнал, тишина стабильна, mono bass складывает противофазный
   низ, punch бустит атаку, smooth давит жесткие верхи, ceiling держится).
-- pluginval, strictness 5: SUCCESS.
+- pluginval, strictness 5: SUCCESS (включая Editor-тест: окно создаётся).
 
 ## Что НЕ покрыто (и почему)
 

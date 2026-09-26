@@ -1,6 +1,6 @@
 [package]
 name = "mex_plug"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [lib]
@@ -9,3 +9,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 nice-plug = { version = "0.4", features = ["assert_process_allocs"] }
+nice-plug-egui = "0.5"
+egui = { version = "0.36", features = ["default_fonts"] }
+atomic_float = "1.1"
